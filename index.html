@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Hunt Smart</title>
+  <meta name="description" content="Weather, wind, sun, moon and deer movement forecast for your tree stands.">
+  <meta name="theme-color" content="#1f2a1c">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Hunt Smart">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" width="28" height="28">
+      <span>Hunt Smart</span>
+    </div>
+    <div class="topbar-right">
+      <span id="updated" class="muted small"></span>
+      <button id="refreshBtn" class="icon-btn" title="Refresh forecast" aria-label="Refresh forecast">&#x21bb;</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <main>
+    <!-- TODAY -->
+    <section id="view-today" class="view active">
+      <div class="day-picker" id="dayPicker"></div>
+
+      <div class="card score-card">
+        <div class="score-ring" id="scoreRing"><span id="scoreValue">--</span></div>
+        <div class="score-text">
+          <div class="label">Deer movement outlook</div>
+          <div id="scoreLabel" class="score-label">Loading…</div>
+          <ul id="scoreReasons" class="reasons"></ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Best windows</h2>
+        <div id="bestWindows" class="windows"></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>Sun</h2>
+          <dl id="sunInfo" class="kv"></dl>
+        </div>
+        <div class="card">
+          <h2>Moon</h2>
+          <div class="moon-row">
+            <canvas id="moonCanvas" width="64" height="64" aria-hidden="true"></canvas>
+            <div>
+              <div id="moonPhaseName" class="strong"></div>
+              <div id="moonIllum" class="muted small"></div>
+            </div>
+          </div>
+          <dl id="moonInfo" class="kv"></dl>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Wind &amp; weather</h2>
+        <div id="wxNow" class="wx-now"></div>
+        <div id="hourly" class="hourly"></div>
+      </div>
+
+      <div class="card">
+        <h2>Pressure trend</h2>
+        <canvas id="pressureChart" class="chart" height="140"></canvas>
+        <p id="pressureNote" class="muted small"></p>
+      </div>
+
+      <div class="card">
+        <h2>Which stand to sit</h2>
+        <div id="standPicks"></div>
+      </div>
+
+      <div class="card">
+        <h2>Solunar / feeding times</h2>
+        <div id="solunar"></div>
+        <p class="muted small">Major periods (~2 hrs) center on the moon overhead and underfoot. Minor periods (~1 hr) center on moonrise and moonset. They're strongest when they line up with dawn or dusk.</p>
+      </div>
+
+      <div class="card">
+        <h2>Scent &amp; thermals</h2>
+        <div id="thermals"></div>
+      </div>
+    </section>
+
+    <!-- MAP -->
+    <section id="view-map" class="view">
+      <div id="map"></div>
+      <div class="map-overlay">
+        <div class="map-hour">
+          <label for="hourSlider" id="hourLabel">Now</label>
+          <input id="hourSlider" type="range" min="0" max="167" value="0">
+        </div>
+        <div class="map-actions">
+          <button id="addStandBtn" class="btn">+ Add stand</button>
+          <button id="locateBtn" class="btn ghost" title="Center on my location">&#x2316; Me</button>
+        </div>
+        <div id="mapHint" class="map-hint hidden">Tap the map where the stand is.</div>
+      </div>
+    </section>
+
+    <!-- WEEK -->
+    <section id="view-week" class="view">
+      <div class="card">
+        <h2>7-day outlook</h2>
+        <div id="weekList"></div>
+      </div>
+    </section>
+
+    <!-- STANDS / SETTINGS -->
+    <section id="view-setup" class="view">
+      <div class="card">
+        <h2>Tree stands</h2>
+        <div id="standList"></div>
+        <p class="muted small">Add stands from the Map tab. For each stand, mark the wind directions that blow your scent away from where deer come from.</p>
+      </div>
+
+      <div class="card">
+        <h2>Settings</h2>
+        <form id="settingsForm" class="settings">
+          <label>Property location
+            <div class="row">
+              <input id="setLat" type="number" step="any" placeholder="Latitude">
+              <input id="setLon" type="number" step="any" placeholder="Longitude">
+            </div>
+            <button type="button" id="useGps" class="btn ghost small-btn">Use my current location</button>
+          </label>
+          <label>Legal light before sunrise (min)
+            <input id="setLegalBefore" type="number" min="0" max="60">
+          </label>
+          <label>Legal light after sunset (min)
+            <input id="setLegalAfter" type="number" min="0" max="60">
+          </label>
+          <label>Peak rut date (your area)
+            <input id="setRut" type="date">
+          </label>
+          <label>Units
+            <select id="setUnits">
+              <option value="imperial">°F, mph, inHg</option>
+              <option value="metric">°C, km/h, hPa</option>
+            </select>
+          </label>
+          <button type="submit" class="btn">Save settings</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Backup</h2>
+        <div class="row">
+          <button id="exportBtn" class="btn ghost">Export stands</button>
+          <label class="btn ghost file-btn">Import<input id="importFile" type="file" accept="application/json" hidden></label>
+        </div>
+        <p class="muted small">Everything is stored on this phone only. Export a backup to share stands with your hunting partner.</p>
+      </div>
+
+      <div class="card">
+        <h2>Add to home screen</h2>
+        <p class="small"><strong>iPhone (Safari):</strong> tap the Share button, then <em>Add to Home Screen</em>.</p>
+        <p class="small"><strong>Android (Chrome):</strong> tap the ⋮ menu, then <em>Add to Home screen</em> / <em>Install app</em>.</p>
+        <button id="installBtn" class="btn hidden">Install app</button>
+      </div>
+
+      <p class="muted small credits">Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>. Imagery: Esri. Map data: © OpenStreetMap contributors. Movement scores are estimates, not guarantees.</p>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-view="today" class="active"><span>&#x2600;</span>Today</button>
+    <button data-view="map"><span>&#x1F5FA;</span>Map</button>
+    <button data-view="week"><span>&#x1F4C5;</span>Week</button>
+    <button data-view="setup"><span>&#x2699;</span>Stands</button>
+  </nav>
+
+  <dialog id="standDialog">
+    <form method="dialog" id="standForm">
+      <h2 id="standDialogTitle">Stand</h2>
+      <label>Name<input id="standName" required maxlength="40"></label>
+      <fieldset>
+        <legend>Good winds (wind blowing <em>from</em>)</legend>
+        <div class="compass-pick" id="windPick"></div>
+      </fieldset>
+      <label>Type
+        <select id="standType">
+          <option>Ladder</option><option>Hang-on</option><option>Climber</option>
+          <option>Box blind</option><option>Ground blind</option>
+        </select>
+      </label>
+      <label>Notes<textarea id="standNotes" rows="2" maxlength="300"></textarea></label>
+      <div class="dialog-actions">
+        <button type="button" id="standDelete" class="btn danger">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" id="standCancel" class="btn ghost">Cancel</button>
+        <button type="submit" value="save" class="btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="vendor/suncalc.js"></script>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="js/astro.js"></script>
+  <script src="js/movement.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

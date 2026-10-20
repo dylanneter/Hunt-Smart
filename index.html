@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Hunt Smart</title>
   <meta name="description" content="Weather, wind, sun, moon and deer movement forecast for your tree stands.">
-  <meta name="theme-color" content="#1f2a1c">
+  <meta name="theme-color" content="#141a12">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -17,14 +17,57 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Line icon sprite (paths adapted from Lucide, ISC license) -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <defs>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></symbol>
+      <symbol id="i-cloud-sun" viewBox="0 0 24 24"><path d="M12 2v2M4.93 4.93l1.41 1.41M20 12h2M19.07 4.93l-1.41 1.41M15.95 12.65a4 4 0 0 0-5.93-4.13M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z"/></symbol>
+      <symbol id="i-cloud-rain" viewBox="0 0 24 24"><path d="M4 14.9A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.24M16 14v6M8 14v6M12 16v6"/></symbol>
+      <symbol id="i-cloud-snow" viewBox="0 0 24 24"><path d="M4 14.9A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.24M8 15h.01M8 19h.01M12 17h.01M12 21h.01M16 15h.01M16 19h.01"/></symbol>
+      <symbol id="i-cloud-storm" viewBox="0 0 24 24"><path d="M6 16.33A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.97M13 12l-3 5h4l-3 5"/></symbol>
+      <symbol id="i-cloud-fog" viewBox="0 0 24 24"><path d="M4 14.9A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.24M16 17H7M17 21H9"/></symbol>
+      <symbol id="i-map" viewBox="0 0 24 24"><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3ZM9 3v15M15 6v15"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+      <symbol id="i-forecast" viewBox="0 0 24 24"><path d="M12 2v2M4.93 4.93l1.41 1.41M20 12h2M19.07 4.93l-1.41 1.41M15.95 12.65a4 4 0 0 0-5.93-4.13M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z"/></symbol>
+      <symbol id="i-ladder" viewBox="0 0 24 24"><path d="M7 3h10M8 3l-2 18M16 3l2 18M7.5 8h9M6.9 13h10.2M6.4 18h11.2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></symbol>
+      <symbol id="i-add-spot" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M12 8v8M8 12h8"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5ZM2 17l10 5 10-5M2 12l10 5 10-5"/></symbol>
+      <symbol id="i-nav" viewBox="0 0 24 24"><path d="m12 2 7 19-7-4-7 4Z"/></symbol>
+      <symbol id="i-locate" viewBox="0 0 24 24"><path d="M2 12h3M19 12h3M12 2v3M12 19v3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+      <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-temp" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
+      <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7Z"/></symbol>
+      <symbol id="i-sunrise" viewBox="0 0 24 24"><path d="M12 2v8M4.93 10.93l1.41 1.41M2 18h2M20 18h2M19.07 10.93l-1.41 1.41M22 22H2M8 6l4-4 4 4M16 18a4 4 0 0 0-8 0"/></symbol>
+      <symbol id="i-sunset" viewBox="0 0 24 24"><path d="M12 10V2M4.93 10.93l1.41 1.41M2 18h2M20 18h2M19.07 10.93l-1.41 1.41M22 22H2M16 6l-4 4-4-4M16 18a4 4 0 0 0-8 0"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+      <symbol id="i-wind" viewBox="0 0 24 24"><path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2M9.6 4.6A2 2 0 1 1 11 8H2M12.6 19.4A2 2 0 1 0 14 16H2"/></symbol>
+      <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+      <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10ZM2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+      <symbol id="i-trees" viewBox="0 0 24 24"><path d="M10 10v.2A3 3 0 0 1 8.9 16H5a3 3 0 0 1-1-5.8V10a3 3 0 0 1 6 0ZM7 16v6M13 19v3M12 19h8.3a1 1 0 0 0 .7-1.7L18 14h.3a1 1 0 0 0 .7-1.7L16 9h.2a1 1 0 0 0 .8-1.7L13 3l-1.4 1.5"/></symbol>
+      <symbol id="i-nose" viewBox="0 0 24 24"><path d="M4 12h8M4 8h12a3 3 0 1 0-3-3M4 16h10a3 3 0 1 1-3 3"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+      <symbol id="i-deer" viewBox="0 0 24 24"><path style="fill:currentColor;stroke:none" d="M12 22c-1.5 0-2.5-1.6-2.9-3.4l-.6-3.1c-.2-1.1.6-2.1 1.7-2.3h3.6c1.1.2 1.9 1.2 1.7 2.3l-.6 3.1C14.5 20.4 13.5 22 12 22ZM9.3 14.6c-1.7.3-3.4-.4-4.4-1.8 1.5-.6 3.3-.4 4.8.8ZM14.7 14.6c1.7.3 3.4-.4 4.4-1.8-1.5-.6-3.3-.4-4.8.8Z"/><path d="M10.3 12.9C9.5 10.5 7.5 9.6 6.6 7.4 6 6 6.2 4.2 7 2.8M7.1 8.6c.7-1.6 1.5-2.8 2.3-4M6.5 6C5.4 5.4 4.6 4.4 4.2 3.2M13.7 12.9c.8-2.4 2.8-3.3 3.7-5.5.6-1.4.4-3.2-.4-4.6M16.9 8.6c-.7-1.6-1.5-2.8-2.3-4M17.5 6c1.1-.6 1.9-1.6 2.3-2.8"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+    </defs>
+  </svg>
+
   <header class="topbar">
-    <div class="brand">
-      <img src="icons/icon-192.png" alt="" width="28" height="28">
-      <span>Hunt Smart</span>
-    </div>
+    <img class="logo" src="icons/icon-192.png" alt="Hunt Smart" width="36" height="36">
+    <div id="updated" class="live-pill"></div>
     <div class="topbar-right">
-      <span id="updated" class="muted small"></span>
-      <button id="refreshBtn" class="icon-btn" title="Refresh forecast" aria-label="Refresh forecast">&#x21bb;</button>
+      <button id="refreshBtn" class="icon-btn" aria-label="Refresh forecast"><svg class="ic"><use href="#i-refresh"/></svg></button>
+      <button class="icon-btn loc-open" aria-label="Search location"><svg class="ic"><use href="#i-search"/></svg></button>
     </div>
   </header>
 
@@ -32,210 +75,302 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <main>
-    <!-- TODAY -->
+    <!-- FORECAST -->
     <section id="view-today" class="view active">
-      <button type="button" class="loc-bar" aria-label="Change weather location">
-        <span class="loc-pin">&#x1F4CD;</span>
-        <span class="loc-text"><span class="muted small">Weather for</span><strong class="loc-name">—</strong><span class="loc-coords muted small"></span></span>
-        <span class="loc-change">Change</span>
-      </button>
-      <div class="day-picker" id="dayPicker"></div>
+      <div class="hero">
+        <button type="button" class="hero-loc loc-open" aria-label="Change weather location">
+          <svg class="ic sm"><use href="#i-nav"/></svg>
+          <span class="loc-name">—</span>
+        </button>
+        <div class="loc-coords muted small"></div>
 
-      <div class="card score-card">
-        <div class="score-ring" id="scoreRing"><span id="scoreValue">--</span></div>
-        <div class="score-text">
-          <div class="label">Deer movement outlook</div>
-          <div id="scoreLabel" class="score-label">Loading…</div>
-          <ul id="scoreReasons" class="reasons"></ul>
+        <div class="hero-score">
+          <svg class="ic deer"><use href="#i-deer"/></svg>
+          <span id="heroScore" class="hero-num">--</span>
+          <span class="hero-unit">/100</span>
+        </div>
+        <div class="meter"><span id="heroMeter"></span></div>
+        <button type="button" class="hero-label" id="scoreHelp">Deer Movement Outlook <svg class="ic sm"><use href="#i-help"/></svg></button>
+        <div id="heroWhen" class="hero-when">—</div>
+
+        <div class="stat-row">
+          <div class="stat stat-wx"><svg class="ic lg" id="heroWxIcon"><use href="#i-sun"/></svg></div>
+          <div class="stat"><span class="stat-k">Temp</span><span class="stat-v" id="heroTemp">--</span></div>
+          <div class="stat"><span class="stat-k">Precip.</span><span class="stat-v" id="heroPrecip">--</span></div>
+          <div class="stat-div"></div>
+          <div class="stat"><svg class="ic sun"><use href="#i-sunrise"/></svg><span class="stat-v" id="heroSunrise">--</span></div>
+          <div class="stat"><svg class="ic sun"><use href="#i-sunset"/></svg><span class="stat-v" id="heroSunset">--</span></div>
+        </div>
+
+        <div class="wind-card" id="windCard">
+          <div id="miniMap"></div>
+          <div class="streaks" id="miniStreaks"></div>
+          <div class="wind-dial-pill">
+            <div class="dial" id="heroDial"><span class="dial-needle"></span></div>
+            <div class="dial-val"><strong id="heroWind">--</strong><span id="heroWindUnit">mph</span></div>
+            <div class="dial-sep"></div>
+            <div class="dial-val"><strong id="heroWindDir">--</strong><span>from</span></div>
+          </div>
+          <button type="button" class="wind-open" data-goview="map" aria-label="Open map"><svg class="ic"><use href="#i-map"/></svg></button>
+        </div>
+
+        <div class="scrubber">
+          <button type="button" class="scrub-pill" id="hourPill">
+            <span class="scrub-step" data-step="-1"><svg class="ic sm"><use href="#i-chev-l"/></svg></span>
+            <span id="hourPillText">--</span>
+            <span class="scrub-step" data-step="1"><svg class="ic sm"><use href="#i-chev-r"/></svg></span>
+          </button>
+          <input id="todayHour" type="range" min="0" max="23" value="7" aria-label="Hour of day">
         </div>
       </div>
 
+      <div class="day-picker" id="dayPicker"></div>
+
+      <h3 class="section">Day outlook</h3>
       <div class="card">
-        <h2>Best windows</h2>
+        <div class="outlook-head">
+          <div><div id="scoreLabel" class="title">Loading…</div><div id="scoreSub" class="muted small"></div></div>
+          <span id="dayScoreChip" class="chip big">--</span>
+        </div>
+        <ul id="scoreReasons" class="reasons"></ul>
         <div id="bestWindows" class="windows"></div>
       </div>
 
-      <div class="grid2">
-        <div class="card">
-          <h2>Sun</h2>
-          <dl id="sunInfo" class="kv"></dl>
-        </div>
-        <div class="card">
-          <h2>Moon</h2>
-          <div class="moon-row">
-            <canvas id="moonCanvas" width="64" height="64" aria-hidden="true"></canvas>
-            <div>
-              <div id="moonPhaseName" class="strong"></div>
-              <div id="moonIllum" class="muted small"></div>
-            </div>
+      <h3 class="section">Which stand to sit</h3>
+      <div class="card flush" id="standPicks"></div>
+
+      <h3 class="section">Hour by hour</h3>
+      <div class="card flush"><div id="hourly" class="hourly"></div></div>
+
+      <h3 class="section">Sun &amp; moon</h3>
+      <div class="card">
+        <div class="moon-row">
+          <canvas id="moonCanvas" width="112" height="112" aria-hidden="true"></canvas>
+          <div>
+            <div id="moonPhaseName" class="title"></div>
+            <div id="moonIllum" class="muted small"></div>
           </div>
-          <dl id="moonInfo" class="kv"></dl>
         </div>
+        <div class="tile-grid" id="sunMoonGrid"></div>
       </div>
 
-      <div class="card">
-        <h2>Wind &amp; weather</h2>
-        <div id="wxNow" class="wx-now"></div>
-        <div id="hourly" class="hourly"></div>
-      </div>
+      <h3 class="section">Feeding times (solunar)</h3>
+      <div class="card flush" id="solunar"></div>
+      <p class="footnote">Major periods (~2 hrs) center on the moon overhead and underfoot. Minor periods (~1 hr) center on moonrise and moonset. They're strongest when they line up with dawn or dusk.</p>
 
+      <h3 class="section">Pressure</h3>
       <div class="card">
-        <h2>Pressure trend</h2>
         <canvas id="pressureChart" class="chart" height="140"></canvas>
         <p id="pressureNote" class="muted small"></p>
       </div>
 
-      <div class="card">
-        <h2>Which stand to sit</h2>
-        <div id="standPicks"></div>
-      </div>
-
-      <div class="card">
-        <h2>Solunar / feeding times</h2>
-        <div id="solunar"></div>
-        <p class="muted small">Major periods (~2 hrs) center on the moon overhead and underfoot. Minor periods (~1 hr) center on moonrise and moonset. They're strongest when they line up with dawn or dusk.</p>
-      </div>
-
-      <div class="card">
-        <h2>Scent &amp; thermals</h2>
-        <div id="thermals"></div>
-      </div>
+      <h3 class="section">Scent &amp; thermals</h3>
+      <div class="card flush" id="thermals"></div>
     </section>
 
     <!-- MAP -->
     <section id="view-map" class="view">
       <div id="map"></div>
-      <div class="map-overlay">
-        <div class="map-hour">
-          <label for="hourSlider" id="hourLabel">Now</label>
-          <input id="hourSlider" type="range" min="0" max="167" value="0">
+      <div class="streaks map-streaks" id="mapStreaks"></div>
+      <div id="windControl" class="map-wind"></div>
+      <div class="fab-stack">
+        <button class="fab loc-open" aria-label="Search location"><svg class="ic"><use href="#i-search"/></svg></button>
+        <button class="fab" id="addStandBtn" aria-label="Add stand"><svg class="ic"><use href="#i-add-spot"/></svg></button>
+        <button class="fab" id="layersBtn" aria-label="Map layers"><svg class="ic"><use href="#i-layers"/></svg></button>
+        <button class="fab" id="locateBtn" aria-label="Center on my location"><svg class="ic"><use href="#i-nav"/></svg></button>
+      </div>
+      <div class="crosshair hidden" id="crosshair"><svg viewBox="0 0 40 40"><path d="M20 4v12M20 24v12M4 20h12M24 20h12"/><circle cx="20" cy="20" r="2"/></svg></div>
+      <div class="map-bottom">
+        <div class="place-bar hidden" id="placeBar">
+          <button class="btn ghost" id="placeCancel">Cancel</button>
+          <button class="btn orange" id="placeConfirm">Place stand here</button>
         </div>
-        <div class="map-actions">
-          <button id="addStandBtn" class="btn">+ Add stand</button>
-          <button id="locateBtn" class="btn ghost" title="Center on my location">&#x2316; Me</button>
+        <div class="map-scrub" id="mapScrub">
+          <span class="scrub-pill small-pill" id="hourLabel">Now</span>
+          <input id="hourSlider" type="range" min="0" max="167" value="0" aria-label="Forecast hour">
         </div>
-        <div id="mapHint" class="map-hint hidden">Tap the map where the stand is.</div>
       </div>
     </section>
 
     <!-- WEEK -->
     <section id="view-week" class="view">
-      <button type="button" class="loc-bar" aria-label="Change weather location">
-        <span class="loc-pin">&#x1F4CD;</span>
-        <span class="loc-text"><span class="muted small">Weather for</span><strong class="loc-name">—</strong><span class="loc-coords muted small"></span></span>
-        <span class="loc-change">Change</span>
-      </button>
-      <div class="card">
-        <h2>7-day outlook</h2>
-        <div id="weekList"></div>
-      </div>
+      <button type="button" class="loc-chip loc-open"><svg class="ic sm"><use href="#i-nav"/></svg><span class="loc-name">—</span></button>
+      <h1 class="page-title">7-Day Outlook</h1>
+      <div class="card flush" id="weekList"></div>
     </section>
 
     <!-- STANDS / SETTINGS -->
     <section id="view-setup" class="view">
-      <div class="card">
-        <h2>Tree stands</h2>
+      <h1 class="page-title">Stands</h1>
+      <p class="page-sub">Tap a stand to edit its good winds.</p>
+      <div class="card flush">
         <div id="standList"></div>
-        <p class="muted small">Add stands from the Map tab. For each stand, mark the wind directions that blow your scent away from where deer come from.</p>
+        <button class="list-row" id="newStandRow">
+          <span class="tile accent"><svg class="ic"><use href="#i-add-spot"/></svg></span>
+          <span class="row-text"><strong>Add a stand</strong><span>Drop a pin on the map</span></span>
+          <svg class="ic chev"><use href="#i-chev-r"/></svg>
+        </button>
       </div>
 
-      <div class="card">
-        <h2>Settings</h2>
-        <form id="settingsForm" class="settings">
-          <label>Property location
-            <div class="row">
-              <input id="setLat" type="number" step="any" placeholder="Latitude">
-              <input id="setLon" type="number" step="any" placeholder="Longitude">
-            </div>
-            <div class="row">
-              <button type="button" id="searchLocBtn" class="btn ghost small-btn">Search for a location</button>
-              <button type="button" id="useGps" class="btn ghost small-btn">Use my current location</button>
-            </div>
-          </label>
-          <label>Legal light before sunrise (min)
-            <input id="setLegalBefore" type="number" min="0" max="60">
-          </label>
-          <label>Legal light after sunset (min)
-            <input id="setLegalAfter" type="number" min="0" max="60">
-          </label>
-          <label>Peak rut date (your area)
-            <input id="setRut" type="date">
-          </label>
-          <label>Units
-            <select id="setUnits">
-              <option value="imperial">°F, mph, inHg</option>
-              <option value="metric">°C, km/h, hPa</option>
-            </select>
-          </label>
-          <button type="submit" class="btn">Save settings</button>
-        </form>
+      <h3 class="section">Location</h3>
+      <div class="card flush">
+        <button class="list-row loc-open">
+          <span class="tile"><svg class="ic"><use href="#i-pin"/></svg></span>
+          <span class="row-text"><strong class="loc-name">—</strong><span class="loc-coords"></span></span>
+          <svg class="ic chev"><use href="#i-chev-r"/></svg>
+        </button>
+        <button class="list-row" id="useGps">
+          <span class="tile"><svg class="ic"><use href="#i-locate"/></svg></span>
+          <span class="row-text"><strong>Use my current location</strong><span>Set the weather location from GPS</span></span>
+        </button>
       </div>
 
-      <div class="card">
-        <h2>Backup</h2>
-        <div class="row">
-          <button id="exportBtn" class="btn ghost">Export stands</button>
-          <label class="btn ghost file-btn">Import<input id="importFile" type="file" accept="application/json" hidden></label>
+      <h3 class="section">Hunting settings</h3>
+      <form id="settingsForm" class="card flush">
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-sunrise"/></svg></span>
+          <span class="row-text"><strong>Shooting light starts</strong><span>Minutes before sunrise</span></span>
+          <input id="setLegalBefore" type="number" min="0" max="60" inputmode="numeric"></label>
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-sunset"/></svg></span>
+          <span class="row-text"><strong>Shooting light ends</strong><span>Minutes after sunset</span></span>
+          <input id="setLegalAfter" type="number" min="0" max="60" inputmode="numeric"></label>
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-deer"/></svg></span>
+          <span class="row-text"><strong>Peak rut</strong><span>For your area</span></span>
+          <input id="setRut" type="date"></label>
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-temp"/></svg></span>
+          <span class="row-text"><strong>Units</strong><span>Temp &amp; wind</span></span>
+          <select id="setUnits"><option value="imperial">°F · mph</option><option value="metric">°C · km/h</option></select></label>
+        <details class="list-row adv">
+          <summary><span class="tile"><svg class="ic"><use href="#i-settings"/></svg></span>
+            <span class="row-text"><strong>Coordinates</strong><span>Enter latitude and longitude by hand</span></span></summary>
+          <div class="row"><input id="setLat" type="number" step="any" placeholder="Latitude"><input id="setLon" type="number" step="any" placeholder="Longitude"></div>
+        </details>
+        <div class="form-foot"><button type="submit" class="btn">Save settings</button></div>
+      </form>
+
+      <h3 class="section">Backup &amp; share</h3>
+      <div class="card flush">
+        <button class="list-row" id="exportBtn">
+          <span class="tile"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="row-text"><strong>Export stands</strong><span>Save a file to back up or send to a partner</span></span>
+        </button>
+        <label class="list-row">
+          <span class="tile"><svg class="ic"><use href="#i-upload"/></svg></span>
+          <span class="row-text"><strong>Import stands</strong><span>Load stands from a backup file</span></span>
+          <input id="importFile" type="file" accept="application/json" hidden>
+        </label>
+      </div>
+
+      <h3 class="section">Add to home screen</h3>
+      <div class="card flush">
+        <div class="list-row static">
+          <span class="tile"><svg class="ic"><use href="#i-phone"/></svg></span>
+          <span class="row-text"><strong>iPhone (Safari)</strong><span>Share button → Add to Home Screen</span></span>
         </div>
-        <p class="muted small">Everything is stored on this phone only. Export a backup to share stands with your hunting partner.</p>
+        <div class="list-row static">
+          <span class="tile"><svg class="ic"><use href="#i-phone"/></svg></span>
+          <span class="row-text"><strong>Android (Chrome)</strong><span>⋮ menu → Install app</span></span>
+        </div>
+        <button id="installBtn" class="list-row hidden">
+          <span class="tile accent"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="row-text"><strong>Install app</strong><span>Add Hunt Smart to this device</span></span>
+        </button>
       </div>
 
-      <div class="card">
-        <h2>Add to home screen</h2>
-        <p class="small"><strong>iPhone (Safari):</strong> tap the Share button, then <em>Add to Home Screen</em>.</p>
-        <p class="small"><strong>Android (Chrome):</strong> tap the ⋮ menu, then <em>Add to Home screen</em> / <em>Install app</em>.</p>
-        <button id="installBtn" class="btn hidden">Install app</button>
-      </div>
-
-      <p class="muted small credits">Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>. Imagery: Esri. Map data: © OpenStreetMap contributors. Movement scores are estimates, not guarantees.</p>
+      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.</p>
     </section>
   </main>
 
   <nav class="tabbar">
-    <button data-view="today" class="active"><span>&#x2600;</span>Today</button>
-    <button data-view="map"><span>&#x1F5FA;</span>Map</button>
-    <button data-view="week"><span>&#x1F4C5;</span>Week</button>
-    <button data-view="setup"><span>&#x2699;</span>Stands</button>
+    <button data-view="today" class="active"><svg class="ic"><use href="#i-forecast"/></svg><span>Forecast</span></button>
+    <button data-view="map"><svg class="ic"><use href="#i-map"/></svg><span>Map</span></button>
+    <button data-view="week"><svg class="ic"><use href="#i-calendar"/></svg><span>Week</span></button>
+    <button data-view="setup"><svg class="ic"><use href="#i-ladder"/></svg><span>Stands</span></button>
   </nav>
 
-  <dialog id="standDialog">
+  <!-- Bottom sheets -->
+  <dialog id="standDialog" class="sheet">
     <form method="dialog" id="standForm">
-      <h2 id="standDialogTitle">Stand</h2>
-      <label>Name<input id="standName" required maxlength="40"></label>
-      <fieldset>
-        <legend>Good winds (wind blowing <em>from</em>)</legend>
-        <div class="compass-pick" id="windPick"></div>
-      </fieldset>
-      <label>Type
-        <select id="standType">
-          <option>Ladder</option><option>Hang-on</option><option>Climber</option>
-          <option>Box blind</option><option>Ground blind</option>
-        </select>
-      </label>
-      <label>Notes<textarea id="standNotes" rows="2" maxlength="300"></textarea></label>
-      <div class="dialog-actions">
-        <button type="button" id="standDelete" class="btn danger">Delete</button>
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2 id="standDialogTitle">Stand</h2><p class="sheet-sub">Name it and pick the winds that work</p></div>
+        <button type="button" class="icon-btn plain" id="standCancel" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <label class="field-block"><span>Name</span><input id="standName" required maxlength="40"></label>
+        <div class="field-block">
+          <span>Good winds <em class="muted">(direction the wind blows from)</em></span>
+          <div class="compass-pick" id="windPick"></div>
+        </div>
+        <label class="field-block"><span>Type</span>
+          <select id="standType">
+            <option>Ladder</option><option>Hang-on</option><option>Climber</option>
+            <option>Box blind</option><option>Ground blind</option>
+          </select>
+        </label>
+        <label class="field-block"><span>Notes</span><textarea id="standNotes" rows="2" maxlength="300"></textarea></label>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" id="standDelete" class="btn ghost danger-text">Delete</button>
         <span class="spacer"></span>
-        <button type="button" id="standCancel" class="btn ghost">Cancel</button>
-        <button type="submit" value="save" class="btn">Save</button>
+        <button type="submit" value="save" class="btn">Save stand</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="locDialog">
+  <dialog id="locDialog" class="sheet">
     <form id="locForm">
-      <h2>Weather location</h2>
-      <div class="row">
-        <input id="locQuery" type="search" placeholder="Town, address, ZIP, or lat, lon" autocomplete="off" enterkeyhint="search">
-        <button type="submit" class="btn">Search</button>
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2>Weather location</h2><p class="sheet-sub">Search a town, address, ZIP, or paste lat, lon</p></div>
+        <button type="button" class="icon-btn plain" id="locCancel" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
-      <div id="locResults" class="loc-results"></div>
-      <div class="dialog-actions">
-        <button type="button" id="locGps" class="btn ghost">&#x2316; Use my current location</button>
-        <span class="spacer"></span>
-        <button type="button" id="locCancel" class="btn ghost">Cancel</button>
+      <div class="sheet-body">
+        <div class="search-box">
+          <svg class="ic"><use href="#i-search"/></svg>
+          <input id="locQuery" type="search" placeholder="Search" autocomplete="off" enterkeyhint="search">
+        </div>
+        <div class="list">
+          <button type="button" id="locGps" class="list-row">
+            <span class="tile accent"><svg class="ic"><use href="#i-locate"/></svg></span>
+            <span class="row-text"><strong>Use my current location</strong><span>GPS on this phone</span></span>
+          </button>
+        </div>
+        <div id="locResults" class="list"></div>
+        <p class="muted small">Place search © OpenStreetMap contributors.</p>
       </div>
-      <p class="muted small">Place search © OpenStreetMap contributors.</p>
+    </form>
+  </dialog>
+
+  <dialog id="layersDialog" class="sheet">
+    <form method="dialog">
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2>Map layers</h2><p class="sheet-sub">Choose a base map</p></div>
+        <button type="submit" class="icon-btn plain" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="layer-grid" id="layerGrid"></div>
+        <label class="toggle-row"><span>Place labels</span><input type="checkbox" id="labelsToggle"></label>
+        <label class="toggle-row"><span>Animated wind</span><input type="checkbox" id="streaksToggle" checked></label>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDialog" class="sheet">
+    <form method="dialog">
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2>Movement outlook</h2><p class="sheet-sub">How the 0–100 score is built</p></div>
+        <button type="submit" class="icon-btn plain" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body list">
+        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-sunrise"/></svg></span><span class="row-text"><strong>Dawn &amp; dusk</strong><span>Deer move most just after sunrise and before sunset</span></span></div>
+        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-moon"/></svg></span><span class="row-text"><strong>Solunar &amp; moon</strong><span>Major/minor periods, new and full moon</span></span></div>
+        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-gauge"/></svg></span><span class="row-text"><strong>Pressure &amp; fronts</strong><span>Rising pressure and cold snaps boost movement</span></span></div>
+        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-wind"/></svg></span><span class="row-text"><strong>Wind &amp; rain</strong><span>High wind and heavy rain slow deer down</span></span></div>
+        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-deer"/></svg></span><span class="row-text"><strong>Rut timing</strong><span>Based on the peak rut date in Settings</span></span></div>
+        <p class="muted small">It's an estimate built from field rules of thumb, not a guarantee. Use it to compare hours and days.</p>
+      </div>
     </form>
   </dialog>
 

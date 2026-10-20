@@ -11,19 +11,6 @@
   const DIRS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   const DIRS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
-  const WMO = {
-    0: ['Clear', '☀️'], 1: ['Mostly clear', '🌤️'], 2: ['Partly cloudy', '⛅'], 3: ['Overcast', '☁️'],
-    45: ['Fog', '🌫️'], 48: ['Freezing fog', '🌫️'],
-    51: ['Light drizzle', '🌦️'], 53: ['Drizzle', '🌦️'], 55: ['Heavy drizzle', '🌧️'],
-    56: ['Freezing drizzle', '🌧️'], 57: ['Freezing drizzle', '🌧️'],
-    61: ['Light rain', '🌦️'], 63: ['Rain', '🌧️'], 65: ['Heavy rain', '🌧️'],
-    66: ['Freezing rain', '🌧️'], 67: ['Freezing rain', '🌧️'],
-    71: ['Light snow', '🌨️'], 73: ['Snow', '🌨️'], 75: ['Heavy snow', '❄️'], 77: ['Snow grains', '🌨️'],
-    80: ['Showers', '🌦️'], 81: ['Showers', '🌧️'], 82: ['Heavy showers', '🌧️'],
-    85: ['Snow showers', '🌨️'], 86: ['Snow showers', '❄️'],
-    95: ['Thunderstorm', '⛈️'], 96: ['Thunderstorm, hail', '⛈️'], 99: ['Thunderstorm, hail', '⛈️'],
-  };
-
   // ---------- State ----------
   const defaults = {
     settings: { lat: null, lon: null, placeName: null, legalBefore: 30, legalAfter: 30, rutPeak: defaultRut(), units: 'imperial' },
@@ -33,6 +20,7 @@
   let forecast = null; // raw cached response
   let model = null; // computed hours/days
   let selectedDay = 0;
+  let selectedHour = null; // hour of day shown in the Forecast hero
   let mapHour = 0;
   let refreshTimer = null, fetching = false, lastError = null;
   let map = null, standLayer = null, coneLayer = null, addingStand = false, pendingLatLng = null, editingId = null;
@@ -198,6 +186,7 @@
   }
 
   function buildModel() {
+    if (!hasLoc()) { model = null; return; }
     const { lat, lon, legalBefore, legalAfter, rutPeak } = store.settings;
     const legal = { before: Number(legalBefore) || 0, after: Number(legalAfter) || 0 };
     const rut = rutPeak ? new Date(`${rutPeak}T12:00:00`) : null;
@@ -239,7 +228,27 @@
     model = { hours, scores, days, current, getDay, rut };
   }
 
-  // ---------- Rendering: Today ----------
+  // ---------- Rendering ----------
+  const SCORE_COLORS = { 's-exc': '#2f9e44', 's-good': '#74b816', 's-fair': '#fab005', 's-slow': '#f08c00', 's-poor': '#c92a2a' };
+  const icon = (name, cls = '') => `<svg class="ic ${cls}"><use href="#i-${name}"/></svg>`;
+  const fmtHourShort = (d) => d.toLocaleTimeString([], { hour: 'numeric' }).replace(/\s/g, '').toLowerCase();
+  const fmtClock = (d) => (d && !isNaN(d) ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '') : '—');
+
+  function wxIconName(code, time) {
+    let night = false;
+    if (time && model) {
+      const d = model.getDay(time);
+      night = time < d.sunrise || time > d.sunset;
+    }
+    if (code === 0 || code === 1) return night ? 'moon' : 'sun';
+    if (code === 2) return night ? 'cloud' : 'cloud-sun';
+    if (code === 45 || code === 48) return 'cloud-fog';
+    if (code >= 95) return 'cloud-storm';
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'cloud-snow';
+    if (code >= 51) return 'cloud-rain';
+    return 'cloud';
+  }
+
   function render() {
     if (!model) return;
     renderDayPicker();
@@ -260,99 +269,85 @@
     }).join('');
   }
 
+  // Hour (0-23) shown in the hero for the selected day.
+  function defaultHour() {
+    if (selectedDay === 0) return new Date().getHours();
+    const sr = model.days[selectedDay].info.sunrise;
+    return sr && !isNaN(sr) ? sr.getHours() : 7;
+  }
+
+  function heroData() {
+    const day = model.days[selectedDay];
+    const i = day.idx.find((j) => model.hours[j].time.getHours() === selectedHour);
+    const h = i != null ? model.hours[i] : null;
+    const isNow = selectedDay === 0 && selectedHour === new Date().getHours();
+    const live = isNow ? liveConditions() : null;
+    return { h: live ? { ...h, ...live, precipProb: h ? h.precipProb : null } : h, score: i != null ? model.scores[i] : null, live: !!live };
+  }
+
   function renderToday() {
     const day = model.days[selectedDay];
     const info = day.info;
     const sum = day.summary;
-    const dayHours = day.idx.map((i) => model.hours[i]);
+    if (selectedHour == null) selectedHour = defaultHour();
 
-    // Score
-    const ring = $('scoreRing');
+    renderHero(info);
+
+    // Day outlook
     if (sum) {
-      $('scoreValue').textContent = sum.score;
-      ring.className = `score-ring ${scoreClass(sum.score)}`;
-      ring.style.setProperty('--pct', sum.score);
-      $('scoreLabel').textContent = `${Movement.label(sum.score)} · ${fmtDay(info.date, selectedDay)}`;
+      $('scoreLabel').textContent = `${Movement.label(sum.score)} day`;
+      $('scoreSub').textContent = `${fmtDay(info.date, selectedDay)} · ${info.date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+      $('dayScoreChip').textContent = sum.score;
+      $('dayScoreChip').className = `chip big ${scoreClass(sum.score)}`;
       $('scoreReasons').innerHTML = sum.reasons.slice(0, 5).map((r) => `<li class="${r.good ? 'good' : 'bad'}">${esc(r.text)}</li>`).join('') || '<li>Typical conditions</li>';
       $('bestWindows').innerHTML = sum.windows.length
-        ? sum.windows.map((w) => `<div class="window"><span class="chip ${scoreClass(w.peak)}">${w.peak}</span> <strong>${fmtTime(w.start)} – ${fmtTime(w.end)}</strong></div>`).join('')
-        : '<p class="muted">No standout windows — dawn and dusk are your best bet.</p>';
+        ? sum.windows.map((w) => `<div class="window">${icon('clock')}<strong>${fmtTime(w.start)} – ${fmtTime(w.end)}</strong><span class="chip ${scoreClass(w.peak)}">${w.peak}</span></div>`).join('')
+        : '<p class="muted small">No standout windows. Dawn and dusk are your best bet.</p>';
     } else {
-      $('scoreValue').textContent = '--';
-      ring.className = 'score-ring';
-      $('scoreLabel').textContent = hasLoc() ? 'Waiting for weather…' : 'Set your property location to begin';
-      $('scoreReasons').innerHTML = hasLoc() ? '' : '<li><button class="btn small-btn" id="quickLocate">Use my location</button></li>';
-      const q = $('quickLocate');
-      if (q) q.onclick = useGps;
-      $('bestWindows').innerHTML = '<p class="muted">—</p>';
+      $('scoreLabel').textContent = hasLoc() ? 'Waiting for weather…' : 'Set your property location';
+      $('scoreSub').textContent = '';
+      $('dayScoreChip').textContent = '--';
+      $('dayScoreChip').className = 'chip big';
+      $('scoreReasons').innerHTML = hasLoc() ? '' : '<li class="muted">Tap the location name above to search, or allow location access.</li>';
+      $('bestWindows').innerHTML = '';
     }
 
-    // Sun
-    const dl = info.dayLength ? `${Math.floor(info.dayLength / HOUR)}h ${Math.round((info.dayLength % HOUR) / 60000)}m` : '—';
-    $('sunInfo').innerHTML = kv([
-      ['Legal light', fmtTime(info.legalStart)],
-      ['Sunrise', fmtTime(info.sunrise)],
-      ['Solar noon', fmtTime(info.solarNoon)],
-      ['Sunset', fmtTime(info.sunset)],
-      ['Legal end', fmtTime(info.legalEnd)],
-      ['Daylight', dl],
-    ]);
-
-    // Moon
-    const m = info.moon;
-    Astro.drawMoon($('moonCanvas'), m.phase);
-    $('moonPhaseName').textContent = m.name;
-    $('moonIllum').textContent = `${Math.round(m.fraction * 100)}% illuminated · ${m.waxing ? 'waxing' : 'waning'}`;
-    $('moonInfo').innerHTML = kv([
-      ['Moonrise', fmtTime(m.rise)], ['Moonset', fmtTime(m.set)],
-      ['Overhead', fmtTime(m.overhead)], ['Underfoot', fmtTime(m.underfoot)],
-    ]);
-
-    // Weather now / day summary
-    if (dayHours.length) {
-      const temps = dayHours.map((h) => h.temp);
-      const precip = dayHours.reduce((s, h) => s + (h.precip || 0), 0);
-      const maxProb = Math.max(...dayHours.map((h) => h.precipProb || 0));
-      const c = selectedDay === 0 ? liveConditions() : null;
-      const am = avgWind(hoursBetween(info.sunrise.getTime() - HOUR, info.sunrise.getTime() + 3 * HOUR));
-      const pm = avgWind(hoursBetween(info.sunset.getTime() - 3 * HOUR, info.sunset.getTime() + HOUR));
-      const wx = WMO[c ? c.code : mode(dayHours.map((h) => h.code))] || ['', ''];
-      $('wxNow').innerHTML = `
-        <div class="wx-main">
-          <span class="wx-icon">${wx[1]}</span>
-          <div>
-            <div class="wx-temp">${c ? fmtTemp(c.temp) : `${fmtTemp(Math.max(...temps))} / ${fmtTemp(Math.min(...temps))}`}</div>
-            <div class="muted small">${esc(wx[0])}${c ? ` · feels ${fmtTemp(c.feels)} · H ${fmtTemp(Math.max(...temps))} L ${fmtTemp(Math.min(...temps))}` : ''}</div>
-          </div>
-          ${c ? `<div class="wx-wind">${arrowSvg(c.dir, 28)}<div><strong>${dirName(c.dir)} ${fmtWind(c.wind)}</strong><div class="muted small">gusts ${fmtWind(c.gust)}</div><div class="muted small">as of ${fmtTime(c.time)}</div></div></div>` : ''}
-        </div>
-        <div class="wx-sits">
-          ${am ? `<div><span class="muted small">Morning sit</span><br>${arrowSvg(am.dir)} <strong>${dirName(am.dir)} ${fmtWind(am.speed)}</strong></div>` : ''}
-          ${pm ? `<div><span class="muted small">Evening sit</span><br>${arrowSvg(pm.dir)} <strong>${dirName(pm.dir)} ${fmtWind(pm.speed)}</strong></div>` : ''}
-          <div><span class="muted small">Precip</span><br><strong>${maxProb}%</strong> <span class="muted small">${precip > 0 ? fmtPrecip(precip) : ''}</span></div>
-          <div><span class="muted small">Humidity</span><br><strong>${c ? c.rh : Math.round(avg(dayHours.map((h) => h.rh)))}%</strong></div>
-        </div>`;
-
-      // Hourly strip for legal light ±1h
+    // Hourly strip for legal light ±1h
+    if (day.idx.length) {
       const from = info.legalStart.getTime() - HOUR, to = info.legalEnd.getTime() + HOUR;
       const strip = day.idx.filter((i) => model.hours[i].time >= from && model.hours[i].time <= to);
       $('hourly').innerHTML = strip.map((i) => {
         const h = model.hours[i], s = model.scores[i];
-        const isNow = selectedDay === 0 && Math.abs(h.time - Date.now()) < HOUR / 2;
-        return `<div class="hour ${isNow ? 'now' : ''}">
-          <div class="muted small">${fmtHour(h.time)}</div>
-          <div class="h-icon">${(WMO[h.code] || ['', ''])[1]}</div>
+        const isNow = selectedDay === 0 && h.time.getHours() === new Date().getHours();
+        const sel = h.time.getHours() === selectedHour;
+        return `<div class="hour ${isNow ? 'now' : ''} ${sel ? 'sel' : ''}" data-hour="${h.time.getHours()}">
+          <div class="muted small">${fmtHourShort(h.time)}</div>
+          ${icon(wxIconName(h.code, h.time))}
           <div>${fmtTemp(h.temp)}</div>
-          <div class="h-wind">${arrowSvg(h.dir, 14)}<span>${dirName(h.dir)}</span></div>
+          <div class="h-wind">${arrowSvg(h.dir, 13)}<span>${dirName(h.dir)}</span></div>
           <div class="small">${Math.round(metric() ? h.wind * 1.609 : h.wind)}</div>
           <div class="small muted">${h.precipProb != null ? h.precipProb + '%' : ''}</div>
           <div class="h-bar"><span class="${scoreClass(s)}" style="height:${s}%"></span></div>
         </div>`;
       }).join('');
     } else {
-      $('wxNow').innerHTML = '<p class="muted">No weather data yet.</p>';
-      $('hourly').innerHTML = '';
+      $('hourly').innerHTML = '<p class="empty">No weather data yet.</p>';
     }
+
+    // Sun & moon
+    const m = info.moon;
+    Astro.drawMoon($('moonCanvas'), m.phase);
+    $('moonPhaseName').textContent = m.name;
+    $('moonIllum').textContent = `${Math.round(m.fraction * 100)}% illuminated · ${m.waxing ? 'waxing' : 'waning'}`;
+    const dl = info.dayLength ? `${Math.floor(info.dayLength / HOUR)}h ${Math.round((info.dayLength % HOUR) / 60000)}m` : '—';
+    const tile = (ic, k, v) => `<div class="tile-stat">${icon(ic)}<div><span>${k}</span><strong>${v}</strong></div></div>`;
+    $('sunMoonGrid').innerHTML = [
+      tile('sunrise', 'Legal light', fmtTime(info.legalStart)), tile('sunset', 'Legal end', fmtTime(info.legalEnd)),
+      tile('sunrise', 'Sunrise', fmtTime(info.sunrise)), tile('sunset', 'Sunset', fmtTime(info.sunset)),
+      tile('moon', 'Moonrise', fmtTime(m.rise)), tile('moon', 'Moonset', fmtTime(m.set)),
+      tile('target', 'Moon overhead', fmtTime(m.overhead)), tile('target', 'Moon underfoot', fmtTime(m.underfoot)),
+      tile('sun', 'Solar noon', fmtTime(info.solarNoon)), tile('clock', 'Daylight', dl),
+    ].join('');
 
     renderPressure(info);
     renderStandPicks(info);
@@ -360,9 +355,80 @@
     renderThermals(info);
   }
 
-  function kv(rows) {
-    return rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  function renderHero(info) {
+    const { h, score, live } = heroData();
+    const day = model.days[selectedDay];
+    const cls = score != null ? scoreClass(score) : null;
+    const color = cls ? SCORE_COLORS[cls] : 'var(--muted)';
+    $('heroScore').textContent = score != null ? score : '--';
+    document.querySelector('.hero-score').style.color = color;
+    $('heroMeter').style.width = `${score || 0}%`;
+    $('heroMeter').style.background = color;
+
+    const at = new Date(info.date); at.setHours(selectedHour);
+    $('heroWhen').textContent = `${fmtDay(info.date, selectedDay)} ${info.date.getMonth() + 1}/${info.date.getDate()} @ ${live ? 'now' : fmtHourShort(at)}`;
+    $('hourPillText').textContent = live ? 'Now' : fmtHourShort(at);
+    $('todayHour').value = selectedHour;
+
+    $('heroWxIcon').innerHTML = `<use href="#i-${h ? wxIconName(h.code, at) : 'sun'}"/>`;
+    $('heroTemp').textContent = h ? fmtTemp(h.temp) : '--';
+    $('heroPrecip').textContent = h && h.precipProb != null ? `${h.precipProb}%` : '--';
+    $('heroSunrise').textContent = fmtClock(info.sunrise);
+    $('heroSunset').textContent = fmtClock(info.sunset);
+
+    const w = h && h.wind != null ? h : null;
+    $('heroWind').textContent = w ? Math.round(metric() ? w.wind * 1.609 : w.wind) : '--';
+    $('heroWindUnit').textContent = metric() ? 'km/h' : 'mph';
+    $('heroWindDir').textContent = w ? dirName(w.dir) : '--';
+    document.querySelector('#heroDial .dial-needle').style.transform = `rotate(${w ? w.dir + 180 : 0}deg)`;
+    setStreaks('miniStreaks', w ? w.dir : null, w ? w.wind : null);
+    if (!day.idx.length) setStreaks('miniStreaks', null, null);
+    renderMiniMap(w);
   }
+
+  // Animated wind arrows drifting downwind over a map.
+  function setStreaks(id, dir, speed) {
+    const box = $(id);
+    if (!box) return;
+    if (dir == null || speed == null || store.settings.streaks === false) { box.innerHTML = ''; return; }
+    let field = box.querySelector('.streak-field');
+    if (!field) {
+      field = document.createElement('div');
+      field.className = 'streak-field';
+      const path = '<svg viewBox="0 0 22 60"><path d="M11 58c-7-10 7-18 0-28S4 14 11 4M5 11l6-7 6 7"/></svg>';
+      let html = '';
+      for (let y = 0; y < 900; y += 110) {
+        for (let x = 0; x < 900; x += 90) {
+          const jx = x + Math.random() * 60, jy = y + Math.random() * 70;
+          html += `<div class="streak" style="left:${jx}px;top:${jy}px;--delay:${(-Math.random() * 4).toFixed(2)}s">${path}</div>`;
+        }
+      }
+      field.innerHTML = html;
+      box.appendChild(field);
+    }
+    field.style.transform = `rotate(${dir + 180}deg)`;
+    const dur = Math.max(1.2, Math.min(4.5, 4.5 - speed * 0.16));
+    field.querySelectorAll('.streak').forEach((s) => s.style.setProperty('--dur', `${dur.toFixed(2)}s`));
+  }
+
+  let miniMap = null, miniLayers = null;
+  function renderMiniMap(h) {
+    if (!hasLoc()) return;
+    const center = [store.settings.lat, store.settings.lon];
+    if (!miniMap) {
+      miniMap = L.map('miniMap', { zoomControl: false, attributionControl: true, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false, tap: false });
+      miniMap.attributionControl.setPrefix(false);
+      miniMap.attributionControl.setPosition('bottomleft');
+      tileLayer('sat').addTo(miniMap);
+      miniLayers = { cones: L.layerGroup().addTo(miniMap), stands: L.layerGroup().addTo(miniMap) };
+    }
+    const bounds = store.stands.length ? L.latLngBounds(store.stands.map((s) => [s.lat, s.lon])) : null;
+    if (bounds && store.stands.length > 1) miniMap.fitBounds(bounds.pad(0.6), { maxZoom: 17 });
+    else miniMap.setView(bounds ? bounds.getCenter() : center, 16);
+    drawStands(miniLayers, h, false);
+    setTimeout(() => miniMap.invalidateSize(), 0);
+  }
+
   function avg(a) { const b = a.filter((v) => v != null); return b.length ? b.reduce((s, v) => s + v, 0) / b.length : 0; }
   function mode(a) { const c = {}; let best = a[0], n = 0; for (const v of a) { c[v] = (c[v] || 0) + 1; if (c[v] > n) { n = c[v]; best = v; } } return best; }
   function hoursBetween(from, to) { return model.hours.filter((h) => h.time >= from && h.time <= to); }
@@ -377,54 +443,48 @@
     canvas.width = w * dpr; canvas.height = hgt * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, hgt);
-    if (pts.length < 2) { $('pressureNote').textContent = ''; return; }
+    if (pts.length < 2) { $('pressureNote').textContent = 'No pressure data yet.'; return; }
     const conv = (p) => (metric() ? p : p * 0.02953);
     const vals = pts.map((p) => conv(p.pressure));
     let lo = Math.min(...vals), hi = Math.max(...vals);
     const pad = metric() ? 2 : 0.06;
     lo -= pad; hi += pad;
-    const L = 44, R = 8, T = 8, B = 20;
-    const x = (t) => L + ((t - from) / (to - from)) * (w - L - R);
+    const L0 = 44, R = 8, T = 8, B = 20;
+    const x = (t) => L0 + ((t - from) / (to - from)) * (w - L0 - R);
     const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (hgt - T - B);
     const css = getComputedStyle(document.documentElement);
-    const grid = css.getPropertyValue('--line').trim(), fg = css.getPropertyValue('--muted').trim(), accent = css.getPropertyValue('--accent').trim();
+    const fg = css.getPropertyValue('--muted').trim(), accent = css.getPropertyValue('--accent').trim(), orange = css.getPropertyValue('--orange').trim();
+    const grid = 'rgba(127,127,127,0.18)';
 
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = '11px -apple-system, system-ui, sans-serif';
     ctx.fillStyle = fg; ctx.strokeStyle = grid; ctx.lineWidth = 1;
     for (let k = 0; k <= 3; k++) {
       const v = lo + ((hi - lo) * k) / 3;
       const yy = y(v);
-      ctx.beginPath(); ctx.moveTo(L, yy); ctx.lineTo(w - R, yy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(L0, yy); ctx.lineTo(w - R, yy); ctx.stroke();
       ctx.fillText(metric() ? v.toFixed(0) : v.toFixed(2), 2, yy + 4);
     }
-    // Day boundaries & labels
     for (let k = 0; k <= 3; k++) {
       const t = from + k * 24 * HOUR;
-      const xx = x(t);
-      ctx.beginPath(); ctx.moveTo(xx, T); ctx.lineTo(xx, hgt - B); ctx.stroke();
-      if (k < 3) ctx.fillText(new Date(t + 12 * HOUR).toLocaleDateString([], { weekday: 'short' }), xx + 4, hgt - 5);
+      if (k < 3) ctx.fillText(new Date(t + 12 * HOUR).toLocaleDateString([], { weekday: 'short' }), x(t) + 4, hgt - 5);
     }
-    // Selected day shading
-    ctx.fillStyle = 'rgba(160, 190, 120, 0.12)';
+    ctx.fillStyle = 'rgba(165, 200, 107, 0.10)';
     ctx.fillRect(x(info.date.getTime()), T, x(info.date.getTime() + 24 * HOUR) - x(info.date.getTime()), hgt - T - B);
-    // Line
-    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+    // Line with soft fill
     ctx.beginPath();
     pts.forEach((p, k) => { const xx = x(p.time.getTime()), yy = y(conv(p.pressure)); k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); });
-    ctx.stroke();
-    // Now marker
+    ctx.strokeStyle = accent; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
     const now = Date.now();
     if (now > from && now < to) {
-      ctx.strokeStyle = '#e8a33d'; ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = orange; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(x(now), T); ctx.lineTo(x(now), hgt - B); ctx.stroke();
       ctx.setLineDash([]);
     }
-    // Note: trend across the selected day's legal light
     const a = pts.find((p) => p.time >= info.legalStart), b = [...pts].reverse().find((p) => p.time <= info.legalEnd);
     if (a && b) {
       const d = b.pressure - a.pressure;
-      const txt = d > 2 ? 'Rising through the day — often good movement behind a front.'
-        : d < -2 ? 'Falling through the day — deer often feed ahead of incoming weather.'
+      const txt = d > 2 ? 'Rising through the day. Often good movement behind a front.'
+        : d < -2 ? 'Falling through the day. Deer often feed ahead of incoming weather.'
           : 'Fairly steady pressure.';
       $('pressureNote').textContent = `${fmtPress(a.pressure)} → ${fmtPress(b.pressure)}. ${txt}`;
     }
@@ -432,35 +492,41 @@
 
   function renderStandPicks(info) {
     const el = $('standPicks');
-    if (!store.stands.length) { el.innerHTML = '<p class="muted">Add your stands on the Map tab to see which ones the wind favors.</p>'; return; }
-    if (!model.hours.length) { el.innerHTML = '<p class="muted">Waiting for wind forecast…</p>'; return; }
+    if (!store.stands.length) { el.innerHTML = '<p class="empty">Add your stands on the Map tab to see which ones the wind favors.</p>'; return; }
+    if (!model.hours.length) { el.innerHTML = '<p class="empty">Waiting for wind forecast…</p>'; return; }
     const am = avgWind(hoursBetween(info.sunrise.getTime() - HOUR, info.sunrise.getTime() + 3 * HOUR));
     const pm = avgWind(hoursBetween(info.sunset.getTime() - 3 * HOUR, info.sunset.getTime() + HOUR));
-    const rank = { 'r-good': 0, 'r-marg': 1, 'r-unk': 2, 'r-bad': 3 };
     const live = selectedDay === 0 ? liveConditions() : null;
+    const rank = { 'r-good': 0, 'r-marg': 1, 'r-unk': 2, 'r-bad': 3 };
     const rows = store.stands.map((s) => ({
       s, n: live ? windRating(s, live.dir, live.wind) : null,
       a: am ? windRating(s, am.dir, am.speed) : null, p: pm ? windRating(s, pm.dir, pm.speed) : null,
     }));
     const r = (x) => rank[x?.cls] ?? 4;
     rows.sort((r1, r2) => (live ? r(r1.n) - r(r2.n) : 0) || r(r1.a) + r(r1.p) - r(r2.a) - r(r2.p));
-    const cell = (x) => `<td>${x ? `<span class="pill ${x.cls}">${x.text}</span>` : '—'}</td>`;
-    el.innerHTML = `<table class="picks"><thead><tr><th>Stand</th>${live ? `<th>Right now<br><span class="muted small">${dirName(live.dir)} ${fmtWind(live.wind)}</span></th>` : ''}<th>Morning${am ? `<br><span class="muted small">${dirName(am.dir)} ${fmtWind(am.speed)}</span>` : ''}</th><th>Evening${pm ? `<br><span class="muted small">${dirName(pm.dir)} ${fmtWind(pm.speed)}</span>` : ''}</th></tr></thead><tbody>`
-      + rows.map(({ s, n, a, p }) => `<tr><td><strong>${esc(s.name)}</strong><br><span class="muted small">${s.goodWinds.length ? s.goodWinds.join(', ') : 'no winds set'}</span></td>
-        ${live ? cell(n) : ''}${cell(a)}${cell(p)}</tr>`).join('')
-      + '</tbody></table>';
+    const cell = (x) => `<div>${x ? `<span class="pill ${x.cls}">${x.text.replace(' wind', '')}</span>` : '—'}</div>`;
+    const head = (k, w) => `<div>${k}${w ? `<small>${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}</small>` : ''}</div>`;
+    const cols = live ? 3 : 2;
+    el.innerHTML = `<div class="pick-head" style="--cols:${cols}"><div style="text-align:left">Stand</div>${live ? head('Now', { dir: live.dir, speed: live.wind }) : ''}${head('Morning', am)}${head('Evening', pm)}</div>`
+      + rows.map(({ s, n, a, p }) => {
+        const best = live ? n : a;
+        return `<div class="pick-row" style="--cols:${cols}" data-edit="${s.id}">
+          <div class="pick-name"><span class="tile ${best ? best.cls : 'r-unk'}">${icon('ladder')}</span>
+            <div><strong>${esc(s.name)}</strong><span>${s.goodWinds.length ? s.goodWinds.join(', ') : 'no winds set'}</span></div></div>
+          ${live ? cell(n) : ''}${cell(a)}${cell(p)}</div>`;
+      }).join('');
   }
 
   function renderSolunar(info) {
     const periods = info.solunar;
-    if (!periods.length) { $('solunar').innerHTML = '<p class="muted">No solunar periods today.</p>'; return; }
+    if (!periods.length) { $('solunar').innerHTML = '<p class="empty">No solunar periods today.</p>'; return; }
     const near = (t) => Math.abs(t - info.sunrise) < 1.5 * HOUR || Math.abs(t - info.sunset) < 1.5 * HOUR;
     const inLight = (p) => p.end >= info.legalStart && p.start <= info.legalEnd;
     $('solunar').innerHTML = periods.map((p) => `
-      <div class="sol ${p.kind} ${inLight(p) ? '' : 'dim'}">
-        <span class="pill ${p.kind === 'major' ? 'r-good' : 'r-marg'}">${p.kind === 'major' ? 'Major' : 'Minor'}</span>
-        <strong>${fmtTime(p.start)} – ${fmtTime(p.end)}</strong>
-        <span class="muted small">${p.label}${near(p.center) ? ' · <b class="hot">lines up with ' + (p.center < info.solarNoon ? 'sunrise' : 'sunset') + '</b>' : ''}${inLight(p) ? '' : ' · outside shooting hours'}</span>
+      <div class="list-row static ${inLight(p) ? '' : 'dim'}">
+        <span class="tile ${p.kind === 'major' ? 'accent' : ''}">${icon('leaf')}</span>
+        <span class="row-text"><strong>${fmtTime(p.start)} – ${fmtTime(p.end)}</strong>
+          <span>${p.kind === 'major' ? 'Major' : 'Minor'} · ${p.label}${near(p.center) ? ` · <b class="hot">lines up with ${p.center < info.solarNoon ? 'sunrise' : 'sunset'}</b>` : ''}${inLight(p) ? '' : ' · outside shooting hours'}</span></span>
       </div>`).join('');
   }
 
@@ -470,15 +536,16 @@
     const dayHours = model.days[selectedDay].idx.map((i) => model.hours[i]);
     const maxWind = dayHours.length ? Math.max(...dayHours.map((h) => h.wind || 0)) : null;
     const rh = dayHours.length ? avg(dayHours.map((h) => h.rh)) : null;
-    const tips = [
-      `<li><strong>Until ~${fmtTime(morningSwitch)}:</strong> cool air sinks — thermals pull scent <em>downhill</em> and into creek bottoms. Favor stands above where deer travel.</li>`,
-      `<li><strong>Midday:</strong> warming air rises — scent drifts <em>uphill</em>.</li>`,
-      `<li><strong>From ~${fmtTime(eveningSwitch)}:</strong> air cools and thermals fall again; scent will start sliding downhill before dark.</li>`,
+    const row = (ic, title, text) => `<div class="list-row static"><span class="tile">${icon(ic)}</span><span class="row-text"><strong>${title}</strong><span>${text}</span></span></div>`;
+    const rows = [
+      row('sunrise', `Until ~${fmtTime(morningSwitch)}`, 'Cool air sinks. Scent pulls downhill into creek bottoms, so favor stands above deer travel.'),
+      row('sun', 'Midday', 'Warming air rises and scent drifts uphill.'),
+      row('sunset', `From ~${fmtTime(eveningSwitch)}`, 'Air cools and thermals fall again. Scent starts sliding downhill before dark.'),
     ];
-    if (maxWind != null && maxWind < 5) tips.push('<li>Light wind day: thermals will dominate and wind may swirl. Play the terrain.</li>');
-    if (maxWind != null && maxWind > 15) tips.push('<li>Strong wind will override thermals; deer bed on leeward sides and in thick cover.</li>');
-    if (rh != null && rh > 75) tips.push('<li>High humidity carries scent farther — be extra careful with wind.</li>');
-    $('thermals').innerHTML = `<ul class="tips">${tips.join('')}</ul>`;
+    if (maxWind != null && maxWind < 5) rows.push(row('wind', 'Light wind day', 'Thermals will dominate and wind may swirl. Play the terrain.'));
+    if (maxWind != null && maxWind > 15) rows.push(row('wind', 'Strong wind', 'Wind overrides thermals. Deer bed on leeward sides and in thick cover.'));
+    if (rh != null && rh > 75) rows.push(row('drop', 'High humidity', 'Scent carries farther. Be extra careful with wind.'));
+    $('thermals').innerHTML = rows.join('');
   }
 
   // ---------- Week ----------
@@ -489,39 +556,48 @@
       const temps = hrs.map((h) => h.temp);
       const am = model.hours.length ? avgWind(hoursBetween(d.info.sunrise.getTime() - HOUR, d.info.sunrise.getTime() + 3 * HOUR)) : null;
       const pm = model.hours.length ? avgWind(hoursBetween(d.info.sunset.getTime() - 3 * HOUR, d.info.sunset.getTime() + HOUR)) : null;
-      const wx = hrs.length ? WMO[mode(hrs.map((h) => h.code))] || ['', ''] : ['', ''];
+      const code = hrs.length ? mode(hrs.filter((h) => h.time >= d.info.sunrise && h.time <= d.info.sunset).map((h) => h.code)) : null;
       const pp = hrs.length ? Math.max(...hrs.map((h) => h.precipProb || 0)) : null;
       const best = s && s.windows[0];
+      const wind = (label, w) => (w ? `<span>${label} ${arrowSvg(w.dir, 12)} <b>${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}</b></span>` : '');
       return `<button class="week-row" data-day="${i}">
-        <div class="wk-day"><strong>${fmtDay(d.info.date, i)}</strong><span class="muted small">${d.info.date.toLocaleDateString([], { month: 'short', day: 'numeric' })}</span></div>
-        <div class="wk-score"><span class="chip big ${s ? scoreClass(s.score) : ''}">${s ? s.score : '–'}</span></div>
-        <div class="wk-wx">${wx[1]} ${temps.length ? `${fmtTemp(Math.max(...temps))}/${fmtTemp(Math.min(...temps))}` : ''}${pp != null ? ` <span class="muted small">${pp}%</span>` : ''}
-          <div class="small">${am ? `AM ${arrowSvg(am.dir, 12)} ${dirName(am.dir)} ${Math.round(am.speed)}` : ''} ${pm ? `· PM ${arrowSvg(pm.dir, 12)} ${dirName(pm.dir)} ${Math.round(pm.speed)}` : ''}</div>
-          <div class="muted small">☀ ${fmtTime(d.info.sunrise)} – ${fmtTime(d.info.sunset)} · ${d.info.moon.name}</div>
-          ${best ? `<div class="small">Best: ${fmtTime(best.start)} – ${fmtTime(best.end)}</div>` : ''}
-        </div></button>`;
+        <div class="wk-top">${icon(code != null ? wxIconName(code) : 'sun')}
+          <div class="wk-day"><strong>${fmtDay(d.info.date, i)}</strong><span>${d.info.date.toLocaleDateString([], { month: 'short', day: 'numeric' })}${temps.length ? ` · ${fmtTemp(Math.max(...temps))} / ${fmtTemp(Math.min(...temps))}` : ''}${pp != null ? ` · ${pp}% rain` : ''}</span></div>
+        </div>
+        <span class="chip big ${s ? scoreClass(s.score) : ''}">${s ? s.score : '–'}</span>
+        <div class="wk-meta">${wind('AM', am)}${wind('PM', pm)}
+          ${best ? `<span>${icon('clock')} <b>${fmtTime(best.start)} – ${fmtTime(best.end)}</b></span>` : ''}
+          <span>${icon('moon')} ${d.info.moon.name}</span></div>
+      </button>`;
     }).join('');
   }
 
   // ---------- Stands list ----------
   function renderStandList() {
     const el = $('standList');
-    if (!store.stands.length) { el.innerHTML = '<p class="muted">No stands yet.</p>'; return; }
+    if (!store.stands.length) { el.innerHTML = ''; return; }
     const cur = currentMapWind();
     el.innerHTML = store.stands.map((s) => {
       const r = cur ? windRating(s, cur.dir, cur.wind) : null;
-      return `<div class="stand-row">
-        <div><strong>${esc(s.name)}</strong> <span class="muted small">${esc(s.type || '')}</span><br>
-        <span class="muted small">Good winds: ${s.goodWinds.length ? s.goodWinds.join(', ') : 'not set'}</span>
-        ${s.notes ? `<br><span class="small">${esc(s.notes)}</span>` : ''}</div>
-        <div class="stand-actions">${r ? `<span class="pill ${r.cls}">${r.text}</span>` : ''}
-          <button class="btn ghost small-btn" data-edit="${s.id}">Edit</button>
-          <button class="btn ghost small-btn" data-goto="${s.id}">Map</button></div>
+      return `<div class="list-row" data-edit="${s.id}">
+        <span class="tile ${r ? r.cls : 'r-unk'}">${icon('ladder')}</span>
+        <span class="row-text"><strong>${esc(s.name)}</strong><span>${s.goodWinds.length ? `Good: ${s.goodWinds.join(', ')}` : 'No good winds set'}${s.type ? ` · ${esc(s.type)}` : ''}</span></span>
+        <span class="row-end">${r ? `<span class="pill ${r.cls}">${r.text}</span>` : ''}
+          <button class="icon-btn" data-goto="${s.id}" aria-label="Show on map">${icon('map')}</button></span>
       </div>`;
     }).join('');
   }
 
   // ---------- Map ----------
+  const TILES = {
+    sat: { name: 'Satellite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts: { maxZoom: 19, attribution: 'Imagery © Esri' } },
+    topo: { name: 'Topo', url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png', opts: { maxZoom: 17, attribution: '© OpenStreetMap, © OpenTopoMap' } },
+    streets: { name: 'Streets', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', opts: { maxZoom: 19, attribution: '© OpenStreetMap' } },
+  };
+  const LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+  const tileLayer = (key) => L.tileLayer(TILES[key].url, TILES[key].opts);
+  let baseLayer = null, labelsLayer = null, placing = false;
+
   // Slider slot 0 is live conditions; the rest are upcoming forecast hours.
   function mapHours() {
     if (!model) return [];
@@ -549,37 +625,44 @@
     if (map) { map.invalidateSize(); return; }
     const center = hasLoc() ? [store.settings.lat, store.settings.lon] : [39.5, -95];
     map = L.map('map', { zoomControl: false, attributionControl: true }).setView(center, hasLoc() ? 16 : 4);
-    L.control.zoom({ position: 'topright' }).addTo(map);
-    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19, attribution: 'Imagery © Esri',
-    });
-    const labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
-    const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenStreetMap, © OpenTopoMap' });
-    const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
-    sat.addTo(map);
-    L.control.layers({ Satellite: sat, Topo: topo, Streets: streets }, { Labels: labels }, { position: 'topright' }).addTo(map);
+    map.attributionControl.setPrefix(false);
+    setBaseLayer(store.settings.mapBase || 'sat');
+    setLabels(!!store.settings.mapLabels);
     coneLayer = L.layerGroup().addTo(map);
     standLayer = L.layerGroup().addTo(map);
-    windControl.addTo(map);
-
-    map.on('click', (e) => {
-      if (!addingStand) return;
-      addingStand = false;
-      $('mapHint').classList.add('hidden');
-      $('addStandBtn').textContent = '+ Add stand';
-      pendingLatLng = e.latlng;
-      openStandDialog(null);
-    });
+    if (store.stands.length) map.fitBounds(L.latLngBounds(store.stands.map((s) => [s.lat, s.lon])).pad(0.5), { maxZoom: 17 });
     setupSlider();
     renderMapLayers();
   }
 
-  const windControl = L.control({ position: 'topleft' });
-  windControl.onAdd = function () {
-    const div = L.DomUtil.create('div', 'wind-control');
-    div.id = 'windControl';
-    return div;
-  };
+  function setBaseLayer(key) {
+    if (!TILES[key]) key = 'sat';
+    store.settings.mapBase = key; save();
+    if (!map) return;
+    if (baseLayer) map.removeLayer(baseLayer);
+    baseLayer = tileLayer(key).addTo(map);
+    baseLayer.bringToBack();
+  }
+  function setLabels(on) {
+    store.settings.mapLabels = on; save();
+    if (!map) return;
+    if (labelsLayer) { map.removeLayer(labelsLayer); labelsLayer = null; }
+    if (on) labelsLayer = L.tileLayer(LABELS_URL, { maxZoom: 19 }).addTo(map);
+  }
+
+  function openLayers() {
+    // Preview tiles near the property at zoom 14.
+    const lat = store.settings.lat ?? 39.5, lon = store.settings.lon ?? -95, z = 14;
+    const x = Math.floor(((lon + 180) / 360) * 2 ** z);
+    const r = (lat * Math.PI) / 180;
+    const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z);
+    $('layerGrid').innerHTML = Object.entries(TILES).map(([k, t]) => `
+      <button type="button" class="layer-opt ${store.settings.mapBase === k || (!store.settings.mapBase && k === 'sat') ? 'on' : ''}" data-layer="${k}">
+        <img alt="" loading="lazy" src="${t.url.replace('{z}', z).replace('{x}', x).replace('{y}', y)}"><span>${t.name}</span></button>`).join('');
+    $('labelsToggle').checked = !!store.settings.mapLabels;
+    $('streaksToggle').checked = store.settings.streaks !== false;
+    $('layersDialog').showModal();
+  }
 
   function setupSlider() {
     const hs = mapHours();
@@ -595,54 +678,63 @@
     return [lat + dLat, lon + dLon];
   }
 
-  function renderMapLayers() {
-    if (!map) return;
-    setupSlider();
-    const h = currentMapWind();
-    const wc = $('windControl');
-    if (wc) {
-      wc.innerHTML = h
-        ? `<div class="wc-compass">${arrowSvg(h.dir, 34)}</div><div><strong>${dirName(h.dir)} ${fmtWind(h.wind)}</strong><br><span class="small">gust ${fmtWind(h.gust)} · ${fmtTemp(h.temp)}</span></div>`
-        : '<span class="small">No wind data</span>';
-    }
-    const sc = h ? (h.live ? scoreAt(Date.now()) : scoreAt(h.time)) : null;
-    $('hourLabel').textContent = h
-      ? `${h.live ? `Now · as of ${fmtTime(h.time)}` : `${h.time.toLocaleDateString([], { weekday: 'short' })} ${fmtHour(h.time)}`} · score ${sc ?? '–'}`
-      : 'No forecast';
-
-    standLayer.clearLayers();
-    coneLayer.clearLayers();
+  // Draw stand markers and downwind scent cones into a {stands, cones} pair of layer groups.
+  function drawStands(layers, h, interactive) {
+    layers.stands.clearLayers();
+    layers.cones.clearLayers();
     for (const s of store.stands) {
       const r = h ? windRating(s, h.dir, h.wind) : { cls: 'r-unk', text: '' };
-      if (h) {
-        // Scent cone downwind of the stand.
-        const len = Math.min(500, 120 + (h.wind || 0) * 25);
+      if (h && h.wind != null) {
+        const len = Math.min(500, 120 + h.wind * 25);
         const half = h.wind < 4 ? 50 : h.wind < 8 ? 32 : 22;
         const down = h.dir + 180;
         const pts = [[s.lat, s.lon]];
         for (let a = -half; a <= half; a += half / 6) pts.push(destPoint(s.lat, s.lon, down + a, len));
         const color = r.cls === 'r-good' ? '#6fcf5a' : r.cls === 'r-marg' ? '#e8c43d' : r.cls === 'r-bad' ? '#e5533d' : '#aaaaaa';
-        L.polygon(pts, { color, weight: 1, fillColor: color, fillOpacity: 0.22, interactive: false }).addTo(coneLayer);
+        L.polygon(pts, { color, weight: 1.5, fillColor: color, fillOpacity: 0.22, interactive: false }).addTo(layers.cones);
       }
-      const icon = L.divIcon({
+      const icn = L.divIcon({
         className: 'stand-icon',
         html: `<div class="stand-dot ${r.cls}"></div><div class="stand-label">${esc(s.name)}</div>`,
-        iconSize: [22, 22], iconAnchor: [11, 11],
+        iconSize: [24, 24], iconAnchor: [12, 12],
       });
-      const mk = L.marker([s.lat, s.lon], { icon, draggable: true }).addTo(standLayer);
-      mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}</span><br><button class="btn small-btn" data-edit="${s.id}">Edit</button>`);
-      mk.on('dragend', () => {
-        const ll = mk.getLatLng();
-        s.lat = ll.lat; s.lon = ll.lng; save(); renderMapLayers();
-      });
+      const mk = L.marker([s.lat, s.lon], { icon: icn, draggable: interactive, interactive }).addTo(layers.stands);
+      if (interactive) {
+        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}</span><br><button class="btn" data-edit="${s.id}">Edit stand</button>`);
+        mk.on('dragend', () => {
+          const ll = mk.getLatLng();
+          s.lat = ll.lat; s.lon = ll.lng; save(); renderMapLayers();
+        });
+      }
     }
+  }
+
+  function renderMapLayers() {
+    if (!map) return;
+    setupSlider();
+    const h = currentMapWind();
+    const sc = h ? (h.live ? scoreAt(Date.now()) : scoreAt(h.time)) : null;
+    $('windControl').innerHTML = h
+      ? `${arrowSvg(h.dir, 30)}<div><strong>${dirName(h.dir)} ${fmtWind(h.wind)}</strong><br><span>Gust ${fmtWind(h.gust)} · ${fmtTemp(h.temp)}${sc != null ? ` · Score ${sc}` : ''}</span></div>`
+      : '';
+    $('hourLabel').textContent = h ? (h.live ? 'Now' : `${h.time.toLocaleDateString([], { weekday: 'short' })} ${fmtHourShort(h.time)}`) : 'No forecast';
+    setStreaks('mapStreaks', h ? h.dir : null, h ? h.wind : null);
+    drawStands({ stands: standLayer, cones: coneLayer }, h, true);
+  }
+
+  function setPlacing(on) {
+    placing = on;
+    $('crosshair').classList.toggle('hidden', !on);
+    $('placeBar').classList.toggle('hidden', !on);
+    $('mapScrub').classList.toggle('hidden', on);
+    $('addStandBtn').classList.toggle('on', on);
   }
 
   // ---------- Stand dialog ----------
   function buildWindPick() {
     // 3x3 compass grid.
     const layout = ['NW', 'N', 'NE', 'W', '', 'E', 'SW', 'S', 'SE'];
-    $('windPick').innerHTML = layout.map((d) => (d ? `<button type="button" data-dir="${d}">${d}</button>` : '<span class="cp-center">🦌</span>')).join('');
+    $('windPick').innerHTML = layout.map((d) => (d ? `<button type="button" data-dir="${d}">${d}</button>` : `<span class="cp-center">${icon('deer')}</span>`)).join('');
     $('windPick').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-dir]');
       if (b) b.classList.toggle('on');
@@ -683,6 +775,8 @@
     document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     document.body.classList.toggle('map-mode', name === 'map');
     if (name === 'map') setTimeout(initMap, 0);
+    else if (placing) setPlacing(false);
+    if (name === 'today' && miniMap) setTimeout(() => miniMap.invalidateSize(), 0);
     window.scrollTo(0, 0);
   }
 
@@ -774,7 +868,7 @@
       if (!res.ok) throw new Error(`search returned ${res.status}`);
       locResults = await res.json();
       out.innerHTML = locResults.length
-        ? locResults.map((r, i) => `<button type="button" class="loc-result" data-i="${i}"><strong>${esc(placeLabel(r.address) || r.name || r.display_name)}</strong><span class="muted small">${esc(r.display_name)}</span></button>`).join('')
+        ? locResults.map((r, i) => `<button type="button" class="list-row loc-result" data-i="${i}"><span class="tile">${icon('pin')}</span><span class="row-text"><strong>${esc(placeLabel(r.address) || r.name || r.display_name)}</strong><span>${esc(r.display_name)}</span></span></button>`).join('')
         : '<p class="muted small">No places found. Try a town and state, an address, or a ZIP code.</p>';
     } catch (err) {
       out.innerHTML = `<p class="muted small">Search failed (${esc(err.message)}). Check your connection.</p>`;
@@ -782,6 +876,11 @@
   }
 
   // ---------- Events ----------
+  function selectHour(h) {
+    selectedHour = ((h % 24) + 24) % 24;
+    renderToday();
+  }
+
   function bind() {
     document.querySelector('.tabbar').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-view]');
@@ -789,39 +888,77 @@
     });
     $('dayPicker').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-day]');
-      if (b) { selectedDay = Number(b.dataset.day); renderDayPicker(); renderToday(); }
+      if (b) { selectedDay = Number(b.dataset.day); selectedHour = defaultHour(); renderDayPicker(); renderToday(); }
     });
     $('weekList').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-day]');
-      if (b) { selectedDay = Number(b.dataset.day); renderDayPicker(); renderToday(); showView('today'); }
+      if (b) { selectedDay = Number(b.dataset.day); selectedHour = defaultHour(); renderDayPicker(); renderToday(); showView('today'); }
     });
+    $('todayHour').addEventListener('input', (e) => selectHour(Number(e.target.value)));
+    $('hourPill').addEventListener('click', (e) => {
+      const st = e.target.closest('[data-step]');
+      if (st) selectHour(selectedHour + Number(st.dataset.step));
+    });
+    $('hourly').addEventListener('click', (e) => {
+      const h = e.target.closest('[data-hour]');
+      if (h) { selectHour(Number(h.dataset.hour)); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    });
+    $('scoreHelp').addEventListener('click', () => $('helpDialog').showModal());
     $('refreshBtn').addEventListener('click', () => fetchForecast(true));
+
+    // Map
     $('hourSlider').addEventListener('input', (e) => { mapHour = Number(e.target.value); renderMapLayers(); renderStandList(); });
-    $('addStandBtn').addEventListener('click', () => {
-      addingStand = !addingStand;
-      $('mapHint').classList.toggle('hidden', !addingStand);
-      $('addStandBtn').textContent = addingStand ? 'Cancel' : '+ Add stand';
+    $('addStandBtn').addEventListener('click', () => setPlacing(!placing));
+    $('placeCancel').addEventListener('click', () => setPlacing(false));
+    $('placeConfirm').addEventListener('click', () => {
+      pendingLatLng = map.getCenter();
+      setPlacing(false);
+      openStandDialog(null);
     });
+    $('newStandRow').addEventListener('click', () => { showView('map'); setTimeout(() => setPlacing(true), 50); });
+    $('layersBtn').addEventListener('click', openLayers);
+    $('layerGrid').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-layer]');
+      if (!b) return;
+      setBaseLayer(b.dataset.layer);
+      $('layerGrid').querySelectorAll('.layer-opt').forEach((x) => x.classList.toggle('on', x === b));
+    });
+    $('labelsToggle').addEventListener('change', (e) => setLabels(e.target.checked));
+    $('streaksToggle').addEventListener('change', (e) => {
+      store.settings.streaks = e.target.checked; save();
+      renderMapLayers(); if (model) renderHero(model.days[selectedDay].info);
+    });
+    let meMarker = null;
     $('locateBtn').addEventListener('click', () => {
       if (!navigator.geolocation || !map) return;
       navigator.geolocation.getCurrentPosition((pos) => {
         const ll = [pos.coords.latitude, pos.coords.longitude];
         map.setView(ll, 17);
-        L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#3d8bfd', fillOpacity: 1 }).addTo(map);
+        if (meMarker) meMarker.setLatLng(ll);
+        else meMarker = L.circleMarker(ll, { radius: 8, color: '#fff', weight: 3, fillColor: '#3d8bfd', fillOpacity: 1 }).addTo(map);
       }, (err) => showBanner(`Couldn't get location: ${err.message}`, 'warn'), { enableHighAccuracy: true, timeout: 15000 });
     });
 
-    // Edit buttons in popups and lists.
+    // Shared click targets: edit stand, show stand on map, open location search, switch view.
     document.addEventListener('click', (e) => {
-      const ed = e.target.closest('[data-edit]');
-      if (ed) { if (map) map.closePopup(); openStandDialog(ed.dataset.edit); return; }
       const go = e.target.closest('[data-goto]');
       if (go) {
         const s = store.stands.find((x) => x.id === go.dataset.goto);
         showView('map');
-        setTimeout(() => map && map.setView([s.lat, s.lon], 17), 50);
+        setTimeout(() => map && s && map.setView([s.lat, s.lon], 17), 50);
+        return;
       }
+      const ed = e.target.closest('[data-edit]');
+      if (ed) { if (map) map.closePopup(); openStandDialog(ed.dataset.edit); return; }
+      if (e.target.closest('.loc-open')) { openLocationDialog(); return; }
+      const gv = e.target.closest('[data-goview]');
+      if (gv) showView(gv.dataset.goview);
     });
+
+    // Tap outside a bottom sheet to close it.
+    document.querySelectorAll('dialog.sheet').forEach((d) => d.addEventListener('click', (e) => {
+      if (e.target === d) { if (d.id === 'standDialog') pendingLatLng = null; d.close(); }
+    }));
 
     $('standForm').addEventListener('submit', (e) => { e.preventDefault(); saveStand(); $('standDialog').close(); });
     $('standCancel').addEventListener('click', () => { pendingLatLng = null; $('standDialog').close(); });
@@ -845,13 +982,11 @@
       s.rutPeak = $('setRut').value || null;
       s.units = $('setUnits').value;
       save();
-      showBanner('Settings saved.');
-      setTimeout(() => showBanner(null), 1500);
+      showToast('Settings saved');
       if (locChanged) setLocation(lat, lon, null);
       else { buildModel(); render(); }
     });
 
-    document.addEventListener('click', (e) => { if (e.target.closest('.loc-bar')) openLocationDialog(); });
     $('locForm').addEventListener('submit', (e) => { e.preventDefault(); searchLocation($('locQuery').value); });
     $('locResults').addEventListener('click', (e) => {
       const b = e.target.closest('.loc-result');
@@ -862,7 +997,6 @@
     });
     $('locGps').addEventListener('click', () => { $('locDialog').close(); useGps(); });
     $('locCancel').addEventListener('click', () => $('locDialog').close());
-    $('searchLocBtn').addEventListener('click', openLocationDialog);
 
     $('exportBtn').addEventListener('click', () => {
       const blob = new Blob([JSON.stringify({ app: 'hunt-smart', version: 1, ...store }, null, 2)], { type: 'application/json' });
@@ -888,8 +1022,7 @@
         store.stands.push(...added);
         if (!hasLoc() && data.settings && typeof data.settings.lat === 'number' && typeof data.settings.lon === 'number') { store.settings.lat = data.settings.lat; store.settings.lon = data.settings.lon; lookupPlaceName(store.settings.lat, store.settings.lon); }
         save(); fillSettings(); buildModel(); render(); fetchForecast();
-        showBanner(`Imported ${added.length} stand(s).`);
-        setTimeout(() => showBanner(null), 2000);
+        showToast(`Imported ${added.length} stand(s)`);
       } catch (err) {
         showBanner(`Import failed: ${err.message}`, 'warn');
       }
@@ -926,13 +1059,11 @@
     fillSettings();
     renderLocation();
     if (hasLoc() && !store.settings.placeName) lookupPlaceName(store.settings.lat, store.settings.lon);
-    if (hasLoc()) {
-      buildModel(); render(); fetchForecast();
-    } else {
-      $('scoreLabel').textContent = 'Set your property location to begin';
-      $('scoreReasons').innerHTML = '<li><button class="btn small-btn" id="quickLocate">Use my location</button></li>'
-        + '<li class="muted">Or tap the location bar above to search.</li>';
-      $('quickLocate').onclick = useGps;
+    buildModel(); render();
+    if (hasLoc()) fetchForecast();
+    else {
+      $('scoreLabel').textContent = 'Set your property location';
+      $('scoreReasons').innerHTML = '<li class="muted">Allow location access, or tap the location name above to search.</li>';
       useGps();
     }
     startAutoRefresh();

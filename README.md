@@ -6,7 +6,7 @@ A free hunting forecast app for private land. Pin your tree stands, then see whi
 
 - **Deer movement score (0–100)** for each day and hour. It combines dawn/dusk timing, solunar periods, pressure trend, temperature swings, wind, rain, moon phase and rut timing.
 - **Best windows**: the highest-scoring stretches inside legal shooting light.
-- **Tree stands on a satellite map**: tap to add a stand, drag to move it, and mark the winds that work for it. Each stand shows a **scent cone** drawn downwind and colored green/yellow/red for the forecast hour. A slider steps through the next 7 days hour by hour.
+- **Tree stands on a satellite map**: tap the add button, line the stand up under the crosshair and place it. Drag to move it, and mark the winds that work for it. Each stand shows a **scent cone** drawn downwind and colored green/yellow/red for the forecast hour. A slider steps through the next 7 days hour by hour.
 - **Which stand to sit**: morning and evening wind ratings for every stand.
 - **Live weather & wind**: refreshes automatically every 10 minutes while the app is open, and again when you reopen it or regain signal. A status dot shows Live / stale / offline, and a banner pops up when the wind shifts 45° or more. On the map, the slider starts at **Now** (live wind); the stand picker adds a **Right now** column.
 - **Weather location**: the Today and Week pages show which town the weather is for. Tap it to search by town, address, ZIP code or `lat, lon`, or to use your current location.
@@ -37,7 +37,7 @@ GitHub Pages on a free account requires the repository to be public.
 ## First-time setup
 
 1. Allow location when asked, or tap the **Weather for…** bar on the Today page and search for your property's town or address.
-2. On the **Map** tab, tap **+ Add stand**, then tap the stand's spot on the map.
+2. On the **Map** tab, tap the add button (square with a +), move the map so the crosshair is on your stand, and tap **Place stand here**.
 3. Select the wind directions that carry your scent away from where deer approach (e.g. a stand with deer coming from the north wants S/SE/SW winds).
 4. Set legal shooting light minutes and your local peak rut date under **Settings**.
 

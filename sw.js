@@ -1,5 +1,5 @@
 /* Offline support: app shell is cached, weather is network-first, map tiles are cached as you view them. */
-const VERSION = 'hs-v6';
+const VERSION = 'hs-v7';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/astro.js', 'js/movement.js', 'js/routes.js',
@@ -49,11 +49,20 @@ self.addEventListener('fetch', (e) => {
   }
 
   if (url.origin === self.location.origin) {
-    // Stale-while-revalidate for the app shell.
+    // Network-first so updates show up on the next open; fall back to the saved copy
+    // when there's no signal (or it's too slow to wait for in the stand).
     e.respondWith(caches.open(VERSION).then(async (cache) => {
-      const hit = await cache.match(e.request, { ignoreSearch: true });
-      const net = fetch(e.request).then((res) => { if (res.ok) cache.put(e.request, res.clone()); return res; }).catch(() => hit);
-      return hit || net;
+      const net = fetch(e.request, { cache: 'no-cache' }).then((res) => { if (res.ok) cache.put(e.request, res.clone()); return res; });
+      const slow = new Promise((resolve) => setTimeout(resolve, 4000));
+      try {
+        const res = await Promise.race([net, slow.then(() => cache.match(e.request, { ignoreSearch: true }))]);
+        if (res) return res;
+        return await net;
+      } catch (err) {
+        const hit = await cache.match(e.request, { ignoreSearch: true });
+        if (hit) return hit;
+        throw err;
+      }
     }));
   }
   // Everything else (weather API) goes straight to the network; the app keeps its own copy.

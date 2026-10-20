@@ -67,6 +67,10 @@
       <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
       <symbol id="i-walk" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="m9 20 3-6 3 2v4M7 12l2-4 4 1 3 3M12 14l-1-5"/></symbol>
       <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2ZM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7Z"/></symbol>
+      <symbol id="i-binoculars" viewBox="0 0 24 24"><path d="M10 10h4M19 7V4a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v3M20 21a2 2 0 0 0 2-2v-3.85c0-1.5-.47-2.96-1.36-4.17L19 8.5V7H15v13a1 1 0 0 0 1 1ZM9 7V4a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v3M4 21a2 2 0 0 1-2-2v-3.85c0-1.5.47-2.96 1.36-4.17L5 8.5V7h4v13a1 1 0 0 1-1 1ZM15 13H9"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.2-6.2 3.2L7 14.2 2 9.3l6.9-1Z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     </defs>
   </svg>
 
@@ -211,6 +215,28 @@
       </div>
     </section>
 
+    <!-- LOG -->
+    <section id="view-log" class="view">
+      <h1 class="page-title">Hunt Log</h1>
+      <p class="page-sub">Every sighting saves the wind, weather and moon so patterns show up over time.</p>
+      <button class="btn orange wide" id="logSightingBtn"><svg class="ic"><use href="#i-binoculars"/></svg> Log a sighting</button>
+
+      <h3 class="section">Target bucks</h3>
+      <div class="card flush">
+        <div id="deerList"></div>
+        <button class="list-row" id="addDeerRow">
+          <span class="tile accent"><svg class="ic"><use href="#i-plus"/></svg></span>
+          <span class="row-text"><strong>Add a target buck</strong><span>Give him a name to track his sightings</span></span>
+        </button>
+      </div>
+
+      <div id="patternBlock"></div>
+
+      <h3 class="section">Sightings</h3>
+      <div class="filter-row" id="logFilter"></div>
+      <div class="card flush" id="sightingList"></div>
+    </section>
+
     <!-- WEEK -->
     <section id="view-week" class="view">
       <button type="button" class="loc-chip loc-open"><svg class="ic sm"><use href="#i-nav"/></svg><span class="loc-name">—</span></button>
@@ -270,7 +296,7 @@
       <div class="card flush">
         <button class="list-row" id="exportBtn">
           <span class="tile"><svg class="ic"><use href="#i-download"/></svg></span>
-          <span class="row-text"><strong>Export stands</strong><span>Stands, routes and deer sign, to back up or send to a partner</span></span>
+          <span class="row-text"><strong>Export stands</strong><span>Stands, routes, deer sign and your hunt log, to back up or send to a partner</span></span>
         </button>
         <label class="list-row">
           <span class="tile"><svg class="ic"><use href="#i-upload"/></svg></span>
@@ -302,6 +328,7 @@
   <nav class="tabbar">
     <button data-view="today" class="active"><svg class="ic"><use href="#i-forecast"/></svg><span>Forecast</span></button>
     <button data-view="map"><svg class="ic"><use href="#i-map"/></svg><span>Map</span></button>
+    <button data-view="log"><svg class="ic"><use href="#i-book"/></svg><span>Log</span></button>
     <button data-view="week"><svg class="ic"><use href="#i-calendar"/></svg><span>Week</span></button>
     <button data-view="setup"><svg class="ic"><use href="#i-ladder"/></svg><span>Stands</span></button>
   </nav>
@@ -370,6 +397,35 @@
     </form>
   </dialog>
 
+  <dialog id="sightingDialog" class="sheet">
+    <form method="dialog" id="sightingForm">
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2 id="sightingTitle">Log a sighting</h2><p class="sheet-sub" id="sightingSub">What did you see?</p></div>
+        <button type="button" class="icon-btn plain" id="sightingClose" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <label class="field-block"><span>When</span><input id="sgTime" type="datetime-local" required></label>
+        <div class="field-block"><span>What</span><div class="chips" id="sgKind" data-single="1"></div></div>
+        <div class="field-block" id="sgDeerBlock"><span>Which buck</span>
+          <div class="row"><select id="sgDeer"></select><button type="button" class="btn ghost" id="sgNewDeer">New</button></div>
+        </div>
+        <label class="field-block"><span>How many</span><input id="sgCount" type="number" min="1" max="50" value="1" inputmode="numeric"></label>
+        <div class="field-block"><span>Doing</span><div class="chips" id="sgActivity" data-single="1"></div></div>
+        <div class="field-block"><span>Heading <em class="muted">(direction it was moving)</em></span><div class="compass-pick facing" id="sgHeading"></div></div>
+        <label class="field-block"><span>Seen from</span><select id="sgFrom"></select></label>
+        <label class="field-block"><span>Notes</span><textarea id="sgNotes" rows="2" maxlength="300"></textarea></label>
+        <div class="snap" id="sgSnap"></div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" id="sgDelete" class="btn ghost danger-text">Delete</button>
+        <button type="button" id="sgMove" class="btn ghost">Move pin</button>
+        <span class="spacer"></span>
+        <button type="submit" value="save" class="btn">Save sighting</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="addSheet" class="sheet">
     <form method="dialog">
       <div class="grab"></div>
@@ -393,6 +449,7 @@
         <label class="toggle-row"><span>Place labels</span><input type="checkbox" id="labelsToggle"></label>
         <label class="toggle-row"><span>Animated wind</span><input type="checkbox" id="streaksToggle" checked></label>
         <label class="toggle-row"><span>Suggested approach for stands without routes</span><input type="checkbox" id="suggestToggle" checked></label>
+        <label class="toggle-row"><span>Sightings (last 60 days)</span><input type="checkbox" id="sightingsToggle" checked></label>
       </div>
     </form>
   </dialog>

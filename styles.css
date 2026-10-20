@@ -364,7 +364,7 @@ body.map-mode main { max-width: none; }
   position: fixed; z-index: 1000; left: var(--tab-gap); right: var(--tab-gap);
   bottom: calc(var(--tab-gap) + env(safe-area-inset-bottom));
   max-width: 520px; margin: 0 auto; height: var(--tab-h);
-  display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px; gap: 4px;
+  display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px; gap: 2px;
   background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4);
   border-radius: 32px; box-shadow: var(--shadow); border: 1px solid var(--line);
 }
@@ -443,3 +443,27 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 .entry-sub { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .entry-sub .pill { padding: 2px 8px; }
 .sheet-section { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 14px 16px 4px; }
+
+/* Hunt log */
+.btn.wide { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 1.05rem; padding: 15px; }
+.tabbar button { font-size: 0.68rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips button { border: 1.5px solid var(--line); background: var(--card2); border-radius: 999px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+.chips button.on { background: var(--orange); color: var(--orange-ink); border-color: var(--orange); }
+.filter-row { display: flex; gap: 8px; overflow-x: auto; padding: 0 2px 10px; scrollbar-width: none; }
+.filter-row::-webkit-scrollbar { display: none; }
+.filter-row button { flex: 0 0 auto; border: 0; background: var(--card); border-radius: 999px; padding: 7px 14px; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+.filter-row button.on { background: var(--orange); color: var(--orange-ink); }
+.snap { background: var(--card2); border-radius: 14px; padding: 12px; font-size: 0.88rem; color: var(--muted); }
+.snap:empty { display: none; }
+.snap strong { color: var(--fg); }
+.tile.buck { color: var(--orange); }
+.tile.target { background: var(--orange); color: var(--orange-ink); border-color: transparent; }
+.pattern-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.sight-pin { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: #fff; color: #6b4a2b; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); }
+.sight-pin .ic { width: 18px; height: 18px; }
+.sight-pin.buck { background: #e8893d; color: #fff; }
+.sight-pin.target { background: #c92a2a; color: #fff; }
+.sight-pin.old { opacity: 0.6; }
+.sight-head { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.sight-head::after { content: ""; position: absolute; left: -5px; top: -27px; border: 5px solid transparent; border-bottom: 9px solid #fff; border-top: 0; filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8)); }

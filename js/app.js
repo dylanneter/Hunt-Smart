@@ -16,6 +16,8 @@
     settings: { lat: null, lon: null, placeName: null, legalBefore: 30, legalAfter: 30, rutPeak: defaultRut(), units: 'imperial' },
     stands: [],
     spots: [], // bedding / food / trail markers
+    sightings: [], // hunt log
+    deer: [], // named target bucks
   };
   let store = load();
   let forecast = null; // raw cached response
@@ -36,7 +38,7 @@
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [] };
+      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [], sightings: s.sightings || [], deer: s.deer || [] };
     } catch (e) { /* ignore */ }
     return JSON.parse(JSON.stringify(defaults));
   }
@@ -257,6 +259,7 @@
     renderWeek();
     renderStandList();
     renderLocation();
+    renderLog();
     if (map) renderMapLayers();
     renderLiveStatus();
   }
@@ -709,6 +712,7 @@
     $('labelsToggle').checked = !!store.settings.mapLabels;
     $('streaksToggle').checked = store.settings.streaks !== false;
     $('suggestToggle').checked = store.settings.suggest !== false;
+    $('sightingsToggle').checked = store.settings.showSightings !== false;
     $('layersDialog').showModal();
   }
 
@@ -785,6 +789,21 @@
       }
     }
 
+    if (interactive && store.settings.showSightings !== false) {
+      for (const sg of store.sightings) {
+        const age = Date.now() - new Date(sg.time);
+        if (age > 60 * 24 * HOUR || sg.lat == null) continue;
+        const cls = sg.deerId ? 'target' : sg.kind === 'buck' ? 'buck' : '';
+        const icn = L.divIcon({
+          className: 'spot-icon',
+          html: `<div class="sight-pin ${cls} ${age > 14 * 24 * HOUR ? 'old' : ''}">${sg.heading != null ? `<span class="sight-head" style="transform:rotate(${sg.heading}deg)"></span>` : ''}${icon(sg.kind === 'buck' ? 'deer' : 'binoculars')}</div>`,
+          iconSize: [30, 30], iconAnchor: [15, 15],
+        });
+        L.marker([sg.lat, sg.lon], { icon: icn, zIndexOffset: -100 }).addTo(layers.stands)
+          .bindPopup(`<strong>${esc(sightingTitle(sg))}</strong><br><span class="small">${sightingWhen(sg)}</span><br><span class="small">${snapText(sg.snap)}</span><br><button class="btn" data-sighting="${sg.id}">Edit</button>`);
+      }
+    }
+
     for (const sp of store.spots) {
       const t = SPOT_TYPES[sp.type];
       if (!t) continue;
@@ -816,7 +835,8 @@
     $('placeBar').classList.toggle('hidden', !placing);
     $('mapScrub').classList.toggle('hidden', !!placing);
     $('addStandBtn').classList.toggle('on', !!placing);
-    if (placing) $('placeConfirm').textContent = placing === 'stand' ? 'Place stand here' : `Place ${SPOT_TYPES[placing].label.toLowerCase()} here`;
+    const labels = { stand: 'Place stand here', sighting: 'Deer was here', 'move-sighting': 'Move pin here' };
+    if (placing) $('placeConfirm').textContent = labels[placing] || `Place ${SPOT_TYPES[placing].label.toLowerCase()} here`;
   }
 
   // ---------- Add to map ----------
@@ -831,6 +851,8 @@
     $('addSheetSub').textContent = 'Select what to add';
     $('addSheetBody').innerHTML = '<div class="sheet-section">Stand</div>'
       + row('data-add="stand"', 'ladder', 'Tree stand', 'Drop a stand at the crosshair')
+      + '<div class="sheet-section">Hunt log</div>'
+      + row('data-add="sighting"', 'binoculars', 'Deer sighting', 'Mark where you saw deer. Weather and wind are saved with it.')
       + '<div class="sheet-section">Routes</div>'
       + row('data-add="route"', 'route', 'Route into a stand', 'Tap points from where you park to the stand. Draw a few and the app picks the best one for the wind.')
       + '<div class="sheet-section">Deer sign</div>'
@@ -926,6 +948,14 @@
     const grid = (center) => layout.map((d) => (d ? `<button type="button" data-dir="${d}">${d}</button>` : `<span class="cp-center">${icon(center)}</span>`)).join('');
     $('windPick').innerHTML = grid('deer');
     $('facingPick').innerHTML = grid('eye');
+    $('sgHeading').innerHTML = grid('deer');
+    $('sgHeading').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-dir]');
+      if (!b) return;
+      const was = b.classList.contains('on');
+      $('sgHeading').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      if (!was) b.classList.add('on');
+    });
     $('windPick').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-dir]');
       if (b) b.classList.toggle('on');
@@ -1108,6 +1138,187 @@
     }
   }
 
+  // ---------- Hunt log ----------
+  const KINDS = { buck: 'Buck', doe: 'Doe', fawn: 'Fawn', group: 'Group' };
+  const ACTIVITIES = { feeding: 'Feeding', traveling: 'Traveling', chasing: 'Chasing', bedded: 'Bedded', standing: 'Standing' };
+  let editingSightingId = null, pendingSighting = null, logFilter = 'all';
+
+  const toLocalInput = (d) => {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const deerName = (id) => (store.deer.find((d) => d.id === id) || {}).name;
+
+  // Conditions at a moment, saved with the sighting so the pattern survives after the forecast rolls off.
+  function snapshotAt(t) {
+    if (!model || !model.hours.length) return null;
+    let i = -1, bd = Infinity;
+    model.hours.forEach((h, j) => { const d = Math.abs(h.time - t); if (d < bd) { bd = d; i = j; } });
+    if (i < 0 || bd > HOUR) return null;
+    const h = model.hours[i];
+    const prev = model.hours[i - 3];
+    const day = model.getDay(t);
+    const minsFrom = (x) => Math.round((t - x) / 60000);
+    const sr = minsFrom(day.sunrise), ss = minsFrom(day.sunset);
+    let sun;
+    if (Math.abs(sr) <= 90) sun = sr >= 0 ? `${sr} min after sunrise` : `${-sr} min before sunrise`;
+    else if (Math.abs(ss) <= 90) sun = ss >= 0 ? `${ss} min after sunset` : `${-ss} min before sunset`;
+    else sun = t < day.solarNoon ? 'mid-morning' : t < day.sunset ? 'midday / afternoon' : 'after dark';
+    return {
+      temp: h.temp, wind: h.wind, dir: h.dir, gust: h.gust, pressure: h.pressure,
+      trend: prev && prev.pressure != null && h.pressure != null ? +(h.pressure - prev.pressure).toFixed(1) : null,
+      code: h.code, score: model.scores[i], moon: day.moon.name, sun,
+      sunPhase: Math.abs(sr) <= 90 ? 'dawn' : Math.abs(ss) <= 90 ? 'dusk' : 'midday',
+    };
+  }
+
+  function snapText(sn) {
+    if (!sn) return 'No weather saved (more than 2 days outside the forecast).';
+    const tr = sn.trend == null ? '' : sn.trend > 1 ? ' rising' : sn.trend < -1 ? ' falling' : ' steady';
+    return `<strong>${dirName(sn.dir)} ${fmtWind(sn.wind)}</strong> · ${fmtTemp(sn.temp)} · ${fmtPress(sn.pressure)}${tr} · ${sn.moon} · ${sn.sun} · Score ${sn.score ?? '–'}`;
+  }
+
+  function fillChips(id, options, value) {
+    $(id).innerHTML = Object.entries(options).map(([k, v]) => `<button type="button" data-v="${k}" class="${k === value ? 'on' : ''}">${v}</button>`).join('');
+  }
+  const chipValue = (id) => { const b = $(id).querySelector('button.on'); return b ? b.dataset.v : null; };
+
+  function startSighting() {
+    showView('map');
+    setTimeout(() => setPlacing('sighting'), 60);
+  }
+
+  function openSightingSheet(id, latlng) {
+    editingSightingId = id;
+    const sg = id ? store.sightings.find((x) => x.id === id) : null;
+    pendingSighting = sg ? null : latlng;
+    $('sightingTitle').textContent = sg ? 'Edit sighting' : 'Log a sighting';
+    $('sgTime').value = toLocalInput(sg ? new Date(sg.time) : new Date());
+    fillChips('sgKind', KINDS, sg ? sg.kind : 'buck');
+    fillChips('sgActivity', ACTIVITIES, sg ? sg.activity : null);
+    $('sgCount').value = sg ? sg.count : 1;
+    $('sgDeer').innerHTML = '<option value="">Unknown buck</option>' + store.deer.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    $('sgDeer').value = sg && sg.deerId ? sg.deerId : '';
+    $('sgFrom').innerHTML = '<option value="house">House / truck / other</option>' + store.stands.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+    $('sgFrom').value = sg ? sg.from : 'house';
+    const heading = sg && sg.heading != null ? DIRS8[Math.round(sg.heading / 45) % 8] : null;
+    $('sgHeading').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.dir === heading));
+    $('sgNotes').value = sg ? sg.notes || '' : '';
+    $('sgDelete').classList.toggle('hidden', !sg);
+    $('sgMove').classList.toggle('hidden', !sg);
+    updateSightingSheet();
+    $('sightingDialog').showModal();
+  }
+
+  function updateSightingSheet() {
+    $('sgDeerBlock').classList.toggle('hidden', chipValue('sgKind') !== 'buck');
+    const t = new Date($('sgTime').value);
+    const sg = editingSightingId ? store.sightings.find((x) => x.id === editingSightingId) : null;
+    const sn = isNaN(t) ? null : snapshotAt(t) || (sg && Math.abs(new Date(sg.time) - t) < 60000 ? sg.snap : null);
+    $('sgSnap').innerHTML = snapText(sn);
+  }
+
+  function saveSighting() {
+    const t = new Date($('sgTime').value);
+    if (isNaN(t)) { showToast('Pick a time'); return false; }
+    const kind = chipValue('sgKind') || 'buck';
+    const hb = $('sgHeading').querySelector('button.on');
+    const old = editingSightingId ? store.sightings.find((x) => x.id === editingSightingId) : null;
+    const data = {
+      time: t.toISOString(), kind, count: Math.max(1, Math.min(50, Number($('sgCount').value) || 1)),
+      deerId: kind === 'buck' ? $('sgDeer').value || null : null,
+      activity: chipValue('sgActivity'), heading: hb ? DIRS8.indexOf(hb.dataset.dir) * 45 : null,
+      from: $('sgFrom').value, notes: $('sgNotes').value.trim().slice(0, 300),
+    };
+    // Keep the old weather if the time didn't change and it's no longer in the forecast window.
+    data.snap = snapshotAt(t) || (old && old.time === data.time ? old.snap : null);
+    if (old) Object.assign(old, data);
+    else store.sightings.push({ id: Date.now().toString(36), lat: pendingSighting.lat, lon: pendingSighting.lng, ...data });
+    store.sightings.sort((a, b) => new Date(b.time) - new Date(a.time));
+    pendingSighting = null;
+    save(); render();
+    showToast(old ? 'Sighting updated' : 'Sighting saved');
+    return true;
+  }
+
+  function sightingTitle(sg) {
+    const many = { doe: 'does', fawn: 'fawns', buck: 'bucks' };
+    let who;
+    if (sg.kind === 'buck' && sg.deerId) who = deerName(sg.deerId) || 'Buck';
+    else if (sg.kind === 'group') who = `Group of ${sg.count}`;
+    else who = sg.count > 1 ? `${sg.count} ${many[sg.kind]}` : KINDS[sg.kind];
+    return `${who}${sg.activity ? ` · ${ACTIVITIES[sg.activity]}` : ''}${sg.heading != null ? ` · heading ${DIRS8[Math.round(sg.heading / 45) % 8]}` : ''}`;
+  }
+  function sightingWhen(sg) {
+    const t = new Date(sg.time);
+    const from = sg.from === 'house' ? 'house' : (store.stands.find((s) => s.id === sg.from) || {}).name || 'stand';
+    return `${t.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${fmtTime(t)} · from ${esc(from)}`;
+  }
+
+  function renderLog() {
+    // Target bucks
+    $('deerList').innerHTML = store.deer.map((d) => {
+      const list = store.sightings.filter((s) => s.deerId === d.id);
+      const last = list[0];
+      return `<button class="list-row" data-deer="${d.id}">
+        <span class="tile target">${icon('deer')}</span>
+        <span class="row-text"><strong>${esc(d.name)}</strong><span>${list.length} sighting${list.length === 1 ? '' : 's'}${last ? ` · last ${new Date(last.time).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</span></span>
+        <svg class="ic chev"><use href="#i-chev-r"/></svg></button>`;
+    }).join('');
+
+    // Filter chips
+    const filters = [['all', 'All'], ['bucks', 'Bucks'], ...store.deer.map((d) => [d.id, d.name])];
+    if (!filters.some(([k]) => k === logFilter)) logFilter = 'all';
+    $('logFilter').innerHTML = filters.map(([k, v]) => `<button data-filter="${k}" class="${k === logFilter ? 'on' : ''}">${esc(v)}</button>`).join('');
+
+    const list = store.sightings.filter((s) => logFilter === 'all' || (logFilter === 'bucks' ? s.kind === 'buck' : s.deerId === logFilter));
+    $('sightingList').innerHTML = list.length ? list.map((sg) => `
+      <div class="list-row" data-sighting="${sg.id}">
+        <span class="tile ${sg.deerId ? 'target' : sg.kind === 'buck' ? 'buck' : ''}">${icon(sg.kind === 'buck' ? 'deer' : 'binoculars')}</span>
+        <span class="row-text"><strong>${esc(sightingTitle(sg))}</strong><span>${sightingWhen(sg)}</span>
+          <span>${sg.snap ? `${dirName(sg.snap.dir)} ${fmtWind(sg.snap.wind)} · ${fmtTemp(sg.snap.temp)} · ${sg.snap.sun}` : 'No weather saved'}</span>
+          ${sg.notes ? `<span>${esc(sg.notes)}</span>` : ''}</span>
+        <button class="icon-btn" data-sight-map="${sg.id}" aria-label="Show on map">${icon('map')}</button>
+      </div>`).join('') : '<p class="empty">No sightings yet. Tap Log a sighting after you see deer, even from the house.</p>';
+
+    renderPatterns();
+  }
+
+  // What the logged sightings for a buck (or all bucks) have in common.
+  function renderPatterns() {
+    const el = $('patternBlock');
+    const target = store.deer.find((d) => d.id === logFilter);
+    const list = store.sightings.filter((s) => s.snap && (target ? s.deerId === target.id : s.kind === 'buck'));
+    if (list.length < 2) { el.innerHTML = ''; return; }
+    const count = (arr) => { const c = {}; arr.forEach((v) => { if (v != null) c[v] = (c[v] || 0) + 1; }); return Object.entries(c).sort((a, b) => b[1] - a[1]); };
+    const top = (arr, n = 2) => count(arr).slice(0, n).map(([k, v]) => `${k} (${v})`).join(', ') || '—';
+    const dirs = list.map((s) => DIRS8[Math.round(s.snap.dir / 45) % 8]);
+    const phases = list.map((s) => ({ dawn: 'Near sunrise', dusk: 'Near sunset', midday: 'Midday' }[s.snap.sunPhase]));
+    const trends = list.map((s) => (s.snap.trend == null ? null : s.snap.trend > 1 ? 'Rising' : s.snap.trend < -1 ? 'Falling' : 'Steady'));
+    const temps = list.map((s) => s.snap.temp).filter((v) => v != null);
+    const hours = list.map((s) => fmtHourShort(new Date(s.time)));
+    const heads = list.filter((s) => s.heading != null).map((s) => DIRS8[Math.round(s.heading / 45) % 8]);
+    const tile = (ic, k, v) => `<div class="tile-stat">${icon(ic)}<div><span>${k}</span><strong>${v}</strong></div></div>`;
+    el.innerHTML = `<h3 class="section">${target ? `${esc(target.name)}'s pattern` : 'Buck patterns'} · ${list.length} sightings</h3>
+      <div class="card"><div class="pattern-grid">
+        ${tile('wind', 'Wind', top(dirs))}
+        ${tile('clock', 'Time', top(phases, 1))}
+        ${tile('sunrise', 'Hours', top(hours))}
+        ${tile('gauge', 'Pressure', top(trends, 1))}
+        ${tile('temp', 'Temp range', temps.length ? `${fmtTemp(Math.min(...temps))} – ${fmtTemp(Math.max(...temps))}` : '—')}
+        ${tile('nav', 'Heading', top(heads))}
+      </div></div>`;
+  }
+
+  function addDeer() {
+    const n = prompt('Name your target buck (e.g. "Big 8", "Droptine")');
+    if (!n || !n.trim()) return null;
+    const d = { id: Date.now().toString(36), name: n.trim().slice(0, 30) };
+    store.deer.push(d);
+    save(); renderLog();
+    return d;
+  }
+
   // ---------- Events ----------
   function selectHour(h) {
     selectedHour = ((h % 24) + 24) % 24;
@@ -1158,6 +1369,12 @@
       const kind = placing;
       setPlacing(false);
       if (kind === 'stand') { pendingLatLng = ll; openStandDialog(null); return; }
+      if (kind === 'sighting') { openSightingSheet(null, ll); return; }
+      if (kind === 'move-sighting') {
+        const sg = store.sightings.find((x) => x.id === editingSightingId);
+        if (sg) { sg.lat = ll.lat; sg.lon = ll.lng; save(); render(); showToast('Pin moved'); }
+        return;
+      }
       const t = SPOT_TYPES[kind];
       const n = store.spots.filter((x) => x.type === kind).length + 1;
       store.spots.push({ id: Date.now().toString(36), type: kind, name: `${t.label} ${n}`, lat: ll.lat, lon: ll.lng });
@@ -1174,6 +1391,46 @@
       $('standDialog').close();
       startDrawing(id);
     });
+    // Hunt log
+    $('logSightingBtn').addEventListener('click', startSighting);
+    $('addDeerRow').addEventListener('click', addDeer);
+    $('deerList').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-deer]');
+      if (b) { logFilter = b.dataset.deer; renderLog(); }
+    });
+    $('logFilter').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-filter]');
+      if (b) { logFilter = b.dataset.filter; renderLog(); }
+    });
+    ['sgKind', 'sgActivity'].forEach((id) => $(id).addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-v]');
+      if (!b) return;
+      const was = b.classList.contains('on');
+      $(id).querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      if (!was || id === 'sgKind') b.classList.add('on');
+      updateSightingSheet();
+    }));
+    $('sgTime').addEventListener('change', updateSightingSheet);
+    $('sgNewDeer').addEventListener('click', () => {
+      const d = addDeer();
+      if (!d) return;
+      $('sgDeer').insertAdjacentHTML('beforeend', `<option value="${d.id}">${esc(d.name)}</option>`);
+      $('sgDeer').value = d.id;
+    });
+    $('sightingForm').addEventListener('submit', (e) => { e.preventDefault(); if (saveSighting()) $('sightingDialog').close(); });
+    $('sightingClose').addEventListener('click', () => { pendingSighting = null; $('sightingDialog').close(); });
+    $('sgDelete').addEventListener('click', () => {
+      if (!confirm('Delete this sighting?')) return;
+      store.sightings = store.sightings.filter((x) => x.id !== editingSightingId);
+      save(); $('sightingDialog').close(); render();
+    });
+    $('sgMove').addEventListener('click', () => {
+      const sg = store.sightings.find((x) => x.id === editingSightingId);
+      $('sightingDialog').close();
+      showView('map');
+      setTimeout(() => { if (sg) map.setView([sg.lat, sg.lon], Math.max(map.getZoom(), 16)); setPlacing('move-sighting'); }, 60);
+    });
+    $('sightingsToggle').addEventListener('change', (e) => { store.settings.showSightings = e.target.checked; save(); renderMapLayers(); });
     $('suggestToggle').addEventListener('change', (e) => { store.settings.suggest = e.target.checked; save(); renderMapLayers(); });
     $('layersBtn').addEventListener('click', openLayers);
     $('layerGrid').addEventListener('click', (e) => {
@@ -1229,6 +1486,15 @@
         save(); render();
         return;
       }
+      const sm = e.target.closest('[data-sight-map]');
+      if (sm) {
+        const sg = store.sightings.find((x) => x.id === sm.dataset.sightMap);
+        showView('map');
+        setTimeout(() => map && sg && map.setView([sg.lat, sg.lon], 17), 50);
+        return;
+      }
+      const sgEl = e.target.closest('[data-sighting]');
+      if (sgEl) { if (map) map.closePopup(); openSightingSheet(sgEl.dataset.sighting); return; }
       const ed = e.target.closest('[data-edit]');
       if (ed) { if (map) map.closePopup(); openStandDialog(ed.dataset.edit); return; }
       if (e.target.closest('.loc-open')) { openLocationDialog(); return; }
@@ -1308,6 +1574,23 @@
         const spots = (Array.isArray(data.spots) ? data.spots : []).filter((x) => SPOT_TYPES[x.type] && typeof x.lat === 'number' && typeof x.lon === 'number' && !spotIds.has(String(x.id)))
           .map((x) => ({ id: String(x.id || Math.random().toString(36).slice(2)), type: x.type, name: String(x.name || SPOT_TYPES[x.type].label).slice(0, 40), lat: x.lat, lon: x.lon }));
         store.spots.push(...spots);
+        const deerIds = new Set(store.deer.map((x) => x.id));
+        (Array.isArray(data.deer) ? data.deer : []).filter((d) => d && d.id && d.name && !deerIds.has(String(d.id)))
+          .forEach((d) => store.deer.push({ id: String(d.id), name: String(d.name).slice(0, 30) }));
+        const sgIds = new Set(store.sightings.map((x) => x.id));
+        (Array.isArray(data.sightings) ? data.sightings : []).filter((x) => x && KINDS[x.kind] && !isNaN(new Date(x.time)) && typeof x.lat === 'number' && typeof x.lon === 'number' && !sgIds.has(String(x.id)))
+          .forEach((x) => store.sightings.push({
+            id: String(x.id), time: new Date(x.time).toISOString(), kind: x.kind, lat: x.lat, lon: x.lon,
+            count: Math.max(1, Math.min(50, Number(x.count) || 1)), deerId: x.deerId ? String(x.deerId) : null,
+            activity: ACTIVITIES[x.activity] ? x.activity : null, heading: typeof x.heading === 'number' ? x.heading : null,
+            from: String(x.from || 'house'), notes: String(x.notes || '').slice(0, 300),
+            snap: x.snap && typeof x.snap === 'object' ? {
+              temp: +x.snap.temp, wind: +x.snap.wind, dir: +x.snap.dir, gust: +x.snap.gust, pressure: +x.snap.pressure,
+              trend: x.snap.trend == null ? null : +x.snap.trend, code: +x.snap.code, score: x.snap.score == null ? null : +x.snap.score,
+              moon: String(x.snap.moon || ''), sun: String(x.snap.sun || ''), sunPhase: ['dawn', 'dusk', 'midday'].includes(x.snap.sunPhase) ? x.snap.sunPhase : 'midday',
+            } : null,
+          }));
+        store.sightings.sort((a, b) => new Date(b.time) - new Date(a.time));
         if (!hasLoc() && data.settings && typeof data.settings.lat === 'number' && typeof data.settings.lon === 'number') { store.settings.lat = data.settings.lat; store.settings.lon = data.settings.lon; lookupPlaceName(store.settings.lat, store.settings.lon); }
         save(); fillSettings(); buildModel(); render(); fetchForecast();
         showToast(`Imported ${added.length} stand(s)`);

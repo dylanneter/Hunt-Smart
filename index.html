@@ -120,16 +120,19 @@
         <div class="wind-card" id="windCard">
           <div id="miniMap"></div>
           <div class="streaks" id="miniStreaks"></div>
-          <div class="wind-dial-pill">
+          <button type="button" class="wind-dial-pill" data-windcheck aria-label="Wind sources and wind check">
             <div class="dial" id="heroDial"><span class="dial-needle"></span></div>
             <div class="dial-val"><strong id="heroWind">--</strong><span id="heroWindUnit">mph</span></div>
             <div class="dial-sep"></div>
             <div class="dial-val"><strong id="heroWindDir">--</strong><span>from</span></div>
-          </div>
+            <div class="dial-sep"></div>
+            <div class="dial-val"><strong id="heroGust">--</strong><span>gust</span></div>
+          </button>
           <button type="button" class="wind-open" data-goview="map" aria-label="Open map"><svg class="ic"><use href="#i-map"/></svg></button>
         </div>
 
         <div class="hero-src" id="heroSrc"></div>
+        <button type="button" class="wind-check-btn" data-windcheck><svg class="ic sm"><use href="#i-wind"/></svg> <span id="windCheckLabel">Wind look wrong? Do a wind check</span></button>
 
         <div class="scrubber">
           <button type="button" class="scrub-pill" id="hourPill">
@@ -192,7 +195,7 @@
     <section id="view-map" class="view">
       <div id="map"></div>
       <div class="streaks map-streaks" id="mapStreaks"></div>
-      <div id="windControl" class="map-wind"></div>
+      <div id="windControl" class="map-wind" data-windcheck role="button" aria-label="Wind sources and wind check"></div>
       <div class="fab-stack">
         <button class="fab loc-open" aria-label="Search location"><svg class="ic"><use href="#i-search"/></svg></button>
         <button class="fab" id="addStandBtn" aria-label="Add stand"><svg class="ic"><use href="#i-add-spot"/></svg></button>
@@ -335,7 +338,7 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 9 (Sit log)</p>
+      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 10 (Wind check)</p>
     </section>
   </main>
 
@@ -413,6 +416,28 @@
         </div>
         <div id="locResults" class="list"></div>
         <p class="muted small">Place search © OpenStreetMap contributors.</p>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="windDialog" class="sheet">
+    <form method="dialog" id="windForm">
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2>Wind check</h2><p class="sheet-sub">Watch a flag, smoke or milkweed. Which way is it blowing <b>toward</b>?</p></div>
+        <button type="button" class="icon-btn plain" id="windClose" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="compass-pick facing" id="wcToward"></div>
+        <div class="wc-result" id="wcResult">Tap the direction it's blowing toward</div>
+        <div class="field-block"><span>Strength</span><div class="chips" id="wcStrength"></div></div>
+        <div class="field-block"><span>What each source says right now</span><div class="list" id="wcSources"></div></div>
+        <div class="snap" id="wcBias"></div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" id="wcClear" class="btn ghost">Use forecast again</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn" id="wcSave">Use my wind check</button>
       </div>
     </form>
   </dialog>

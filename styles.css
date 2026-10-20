@@ -515,3 +515,12 @@ body.sitting .map-bottom { bottom: calc(var(--tab-h) + var(--tab-gap) * 3 + 64px
 .score-bar .track { height: 10px; background: var(--card2); border-radius: 99px; overflow: hidden; }
 .score-bar .track span { display: block; height: 100%; border-radius: 99px; }
 .score-bar b { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Wind check */
+button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
+.wind-check-btn { margin-top: 10px; background: var(--card2); border: 0; border-radius: 999px; padding: 8px 14px; font-weight: 600; font-size: 0.85rem; color: var(--fg); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.wind-check-btn.active { background: var(--orange); color: var(--orange-ink); }
+.map-wind { cursor: pointer; }
+.wc-result { text-align: center; font-weight: 700; font-size: 1.05rem; }
+.wc-src .tile { width: 40px; height: 40px; border-radius: 12px; }
+.wc-src .src-val { font-weight: 700; white-space: nowrap; }

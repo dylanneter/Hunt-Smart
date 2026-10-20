@@ -20,6 +20,7 @@
     deer: [], // named target bucks
     sits: [], // sit log
     activeSitId: null,
+    windChecks: [], // what the hunter actually saw vs the forecast
   };
   let store = load();
   let forecast = null; // raw cached response
@@ -40,7 +41,7 @@
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [], sightings: s.sightings || [], deer: s.deer || [], sits: s.sits || [], activeSitId: s.activeSitId || null };
+      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [], sightings: s.sightings || [], deer: s.deer || [], sits: s.sits || [], activeSitId: s.activeSitId || null, windChecks: s.windChecks || [], windCheckClearedAt: s.windCheckClearedAt || 0 };
     } catch (e) { /* ignore */ }
     return JSON.parse(JSON.stringify(defaults));
   }
@@ -210,14 +211,14 @@
     const getJSON = async (u) => { const r = await fetch(u, { headers: { Accept: 'application/geo+json' } }); if (!r.ok) throw new Error(r.status); return r.json(); };
     try {
       let st = store.settings.nwsStations;
-      if (!st || st.key !== key) {
+      if (!st || st.key !== key || st.v !== 2) {
         const pt = await getJSON(`${api}/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
         const list = await getJSON(pt.properties.observationStations);
-        const ids = (list.features || []).slice(0, 3).map((f) => ({
+        const ids = (list.features || []).map((f) => ({
           id: f.properties.stationIdentifier, name: f.properties.name,
           km: L.latLng(lat, lon).distanceTo([f.geometry.coordinates[1], f.geometry.coordinates[0]]) / 1000,
-        }));
-        st = { key, ids };
+        })).sort((a, b) => a.km - b.km).slice(0, 4);
+        st = { key, ids, v: 2 };
         store.settings.nwsStations = st; save();
       }
       const conv = (q, to) => {
@@ -313,6 +314,11 @@
         const g = (v) => pick(h, v, i)[0];
         const t = new Date(h.time[i] * 1000);
         if (Math.abs(t - nowMs) < HOUR / 2) {
+          sources.byModel = [...MODELS, ''].map((m) => {
+            const k = (v) => (m ? h[`${v}_${m}`] : h[v]);
+            const sp = k('wind_speed_10m'), dr = k('wind_direction_10m'), gu = k('wind_gusts_10m');
+            return sp && sp[i] != null && dr && dr[i] != null ? { name: MODEL_NAMES[m], speed: sp[i], dir: dr[i], gust: gu ? gu[i] : null } : null;
+          }).filter(Boolean);
           sources.wind = MODEL_NAMES[pick(h, 'wind_speed_10m', i)[1]];
           sources.temp = MODEL_NAMES[pick(h, 'temperature_2m', i)[1]];
           sources.pressure = MODEL_NAMES[pick(h, 'pressure_msl', i)[1]];
@@ -512,6 +518,10 @@
     $('heroWind').textContent = w ? Math.round(metric() ? w.wind * 1.609 : w.wind) : '--';
     $('heroWindUnit').textContent = metric() ? 'km/h' : 'mph';
     $('heroWindDir').textContent = w ? dirName(w.dir) : '--';
+    $('heroGust').textContent = w && w.gust != null ? Math.round(metric() ? w.gust * 1.609 : w.gust) : '--';
+    const chk = activeWindCheck();
+    $('windCheckLabel').textContent = chk ? `Using your wind check (${dirName(chk.dir)}) · tap to update` : 'Wind look wrong? Do a wind check';
+    document.querySelector('.wind-check-btn').classList.toggle('active', !!chk);
     document.querySelector('#heroDial .dial-needle').style.transform = `rotate(${w ? w.dir + 180 : 0}deg)`;
     setStreaks('miniStreaks', w ? w.dir : null, w ? w.wind : null);
     if (!day.idx.length) setStreaks('miniStreaks', null, null);
@@ -794,7 +804,17 @@
     const live = liveConditions();
     return live ? [live, ...future] : future;
   }
-  function liveConditions() {
+  const CHECK_MS = 90 * 60 * 1000;
+  // The hunter's own wind check, if recent and not cleared.
+  function activeWindCheck() {
+    const c = store.windChecks[0];
+    if (!c) return null;
+    const t = new Date(c.time).getTime();
+    return Date.now() - t < CHECK_MS && t > (store.windCheckClearedAt || 0) ? c : null;
+  }
+
+  // Forecast + station only (no wind check): used to compare against what the hunter sees.
+  function measuredOrModel() {
     if (!model || !model.current) return null;
     const c = model.current;
     if (Date.now() - c.time > 3 * HOUR) return null; // cached and too old to call "now"
@@ -809,6 +829,19 @@
       live.time = o.time;
       live.measured = true;
       live.src = `Measured at ${o.station} (${Math.round(o.km * 0.621)} mi away) at ${fmtTime(o.time)}`;
+    }
+    return live;
+  }
+
+  function liveConditions() {
+    const live = measuredOrModel();
+    const chk = activeWindCheck();
+    if (!live) return null;
+    if (chk) {
+      live.dir = chk.dir;
+      if (chk.speed != null) live.wind = chk.speed;
+      live.checked = true;
+      live.src = `Your wind check at ${fmtTime(new Date(chk.time))}: ${dirName(chk.dir)}`;
     }
     return live;
   }
@@ -1715,6 +1748,68 @@
     }, 60);
   }
 
+  // ---------- Wind check ----------
+  const STRENGTH = { calm: ['Calm', 0], light: ['Light (1–5)', 3], moderate: ['Moderate (6–12)', 9], strong: ['Strong (13–20)', 16], gale: ['Very strong (20+)', 23] };
+  let wcToward = null;
+
+  function openWindCheck() {
+    if (!model) { showToast('Set your location first'); return; }
+    const chk = activeWindCheck();
+    wcToward = chk ? (chk.dir + 180) % 360 : null;
+    const layout = ['NW', 'N', 'NE', 'W', '', 'E', 'SW', 'S', 'SE'];
+    $('wcToward').innerHTML = layout.map((d) => (d ? `<button type="button" data-dir="${d}" class="${wcToward != null && DIRS8[Math.round(wcToward / 45) % 8] === d ? 'on' : ''}">${d}</button>` : `<span class="cp-center">${icon('wind')}</span>`)).join('');
+    fillChips('wcStrength', Object.fromEntries(Object.entries(STRENGTH).map(([k, v]) => [k, v[0]])), chk ? chk.strength : null);
+    updateWcResult();
+
+    // Every source side by side.
+    const row = (ic, name, sub, dir, speed, gust) => `<div class="list-row static wc-src"><span class="tile">${icon(ic)}</span>
+      <span class="row-text"><strong>${name}</strong><span>${sub}</span></span>
+      <span class="src-val">${dir != null ? `${dirName(dir)} ${fmtWind(speed)}` : '—'}${gust != null ? `<br><span class="muted small">gust ${fmtWind(gust)}</span>` : ''}</span></div>`;
+    const rows = [];
+    const o = observation;
+    if (o) rows.push(row('gauge', `Station ${o.station}`, `${esc(o.stationName || '')} · ${Math.round(o.km * 0.621)} mi away · ${Math.round((Date.now() - o.time) / 60000)} min old`, o.dir, o.wind, o.gust));
+    else rows.push(row('gauge', 'Weather station', 'No recent reading nearby', null));
+    for (const m of (model.sources && model.sources.byModel) || []) rows.push(row('cloud', m.name, 'Forecast for this hour', m.dir, m.speed, m.gust));
+    if (chk) rows.push(row('eye', 'Your wind check', fmtTime(new Date(chk.time)), chk.dir, chk.speed));
+    $('wcSources').innerHTML = rows.join('');
+
+    // How far off has the forecast been when you checked?
+    const past = store.windChecks.filter((c) => c.forecastDir != null && c.speed !== 0).slice(0, 20);
+    if (past.length >= 2) {
+      const diffs = past.map((c) => ((c.dir - c.forecastDir + 540) % 360) - 180); // + = actual is clockwise of forecast
+      const absAvg = diffs.reduce((a, d) => a + Math.abs(d), 0) / diffs.length;
+      const signed = diffs.reduce((a, d) => a + d, 0) / diffs.length;
+      const turn = Math.abs(signed) >= 20 ? ` Real wind has usually been turned ${Math.round(Math.abs(signed))}° ${signed > 0 ? 'clockwise' : 'counter-clockwise'} from the forecast.` : '';
+      $('wcBias').innerHTML = `Your last ${past.length} wind checks: the forecast was off by <strong>${Math.round(absAvg)}°</strong> on average.${turn}`;
+    } else {
+      $('wcBias').innerHTML = store.windChecks.length ? 'A couple more wind checks and the app will show how far off the forecast usually is at your place.' : '';
+    }
+    $('wcClear').classList.toggle('hidden', !chk);
+    $('windDialog').showModal();
+  }
+
+  function updateWcResult() {
+    $('wcResult').textContent = wcToward == null ? 'Tap the direction it\'s blowing toward'
+      : `Blowing toward the ${DIRS8[Math.round(wcToward / 45) % 8]}, so that's a ${DIRS8[Math.round(((wcToward + 180) % 360) / 45) % 8]} wind`;
+  }
+
+  function saveWindCheck() {
+    const strength = chipValue('wcStrength');
+    if (wcToward == null && strength !== 'calm') { showToast('Tap which way it is blowing toward'); return false; }
+    const base = measuredOrModel();
+    const fc = model.current;
+    const dir = wcToward != null ? (wcToward + 180) % 360 : base ? base.dir : 0;
+    store.windChecks.unshift({
+      time: new Date().toISOString(), dir, strength: strength || null, speed: strength ? STRENGTH[strength][1] : null,
+      forecastDir: fc ? fc.dir : null, forecastSpeed: fc ? fc.wind : null, forecastModel: model.sources ? model.sources.wind : null,
+      stationDir: observation ? observation.dir : null, stationSpeed: observation ? observation.wind : null, station: observation ? observation.station : null,
+    });
+    store.windChecks = store.windChecks.slice(0, 200);
+    save(); render();
+    showToast(`Using a ${dirName(dir)} wind for the next 90 minutes`);
+    return true;
+  }
+
   // ---------- Events ----------
   function selectHour(h) {
     selectedHour = ((h % 24) + 24) % 24;
@@ -1821,6 +1916,24 @@
     });
     $('sightingForm').addEventListener('submit', (e) => { e.preventDefault(); if (saveSighting()) $('sightingDialog').close(); });
     $('sightingClose').addEventListener('click', () => { pendingSighting = null; sightingContext = null; $('sightingDialog').close(); });
+    // Wind check
+    $('wcToward').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-dir]');
+      if (!b) return;
+      $('wcToward').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      wcToward = DIRS8.indexOf(b.dataset.dir) * 45;
+      updateWcResult();
+    });
+    $('wcStrength').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-v]');
+      if (!b) return;
+      const was = b.classList.contains('on');
+      $('wcStrength').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      if (!was) b.classList.add('on');
+    });
+    $('windForm').addEventListener('submit', (e) => { e.preventDefault(); if (saveWindCheck()) $('windDialog').close(); });
+    $('windClose').addEventListener('click', () => $('windDialog').close());
+    $('wcClear').addEventListener('click', () => { store.windCheckClearedAt = Date.now(); save(); render(); $('windDialog').close(); showToast('Back to forecast and station wind'); });
     // Sit log
     $('startSitBtn').addEventListener('click', () => (activeSit() ? openSitSheet('end', activeSit().id) : openSitSheet('start')));
     $('sitEndBtn').addEventListener('click', () => { const a = activeSit(); if (a) openSitSheet('end', a.id); });
@@ -1908,6 +2021,7 @@
         save(); render();
         return;
       }
+      if (e.target.closest('[data-windcheck]')) { openWindCheck(); return; }
       const sitRow = e.target.closest('[data-sit]');
       if (sitRow) { const x = store.sits.find((y) => y.id === sitRow.dataset.sit); if (x) openSitSheet(x.end ? 'edit' : 'end', x.id); return; }
       const sm = e.target.closest('[data-sight-map]');

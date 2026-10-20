@@ -18,6 +18,8 @@
     spots: [], // bedding / food / trail markers
     sightings: [], // hunt log
     deer: [], // named target bucks
+    sits: [], // sit log
+    activeSitId: null,
   };
   let store = load();
   let forecast = null; // raw cached response
@@ -38,7 +40,7 @@
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [], sightings: s.sightings || [], deer: s.deer || [] };
+      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [], sightings: s.sightings || [], deer: s.deer || [], sits: s.sits || [], activeSitId: s.activeSitId || null };
     } catch (e) { /* ignore */ }
     return JSON.parse(JSON.stringify(defaults));
   }
@@ -1389,7 +1391,7 @@
     $('sgDeer').innerHTML = '<option value="">Unknown buck</option>' + store.deer.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     $('sgDeer').value = sg && sg.deerId ? sg.deerId : '';
     $('sgFrom').innerHTML = '<option value="house">House / truck / other</option>' + store.stands.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-    $('sgFrom').value = sg ? sg.from : 'house';
+    $('sgFrom').value = sg ? sg.from : sightingContext ? sightingContext.from : activeSit() ? activeSit().standId : 'house';
     const heading = sg && sg.heading != null ? DIRS8[Math.round(sg.heading / 45) % 8] : null;
     $('sgHeading').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.dir === heading));
     $('sgNotes').value = sg ? sg.notes || '' : '';
@@ -1422,7 +1424,13 @@
     // Keep the old weather if the time didn't change and it's no longer in the forecast window.
     data.snap = snapshotAt(t) || (old && old.time === data.time ? old.snap : null);
     if (old) Object.assign(old, data);
-    else store.sightings.push({ id: Date.now().toString(36), lat: pendingSighting.lat, lon: pendingSighting.lng, ...data });
+    else {
+      // Attach to the sit it happened during.
+      const sit = sightingContext ? store.sits.find((x) => x.id === sightingContext.sitId)
+        : store.sits.find((x) => t >= new Date(x.start) && (!x.end ? true : t <= new Date(x.end)));
+      store.sightings.push({ id: Date.now().toString(36), lat: pendingSighting.lat, lon: pendingSighting.lng, ...data, sitId: sit ? sit.id : null });
+      sightingContext = null;
+    }
     store.sightings.sort((a, b) => new Date(b.time) - new Date(a.time));
     pendingSighting = null;
     save(); render();
@@ -1471,6 +1479,7 @@
       </div>`).join('') : '<p class="empty">No sightings yet. Tap Log a sighting after you see deer, even from the house.</p>';
 
     renderPatterns();
+    renderSits();
   }
 
   // What the logged sightings for a buck (or all bucks) have in common.
@@ -1506,6 +1515,204 @@
     store.deer.push(d);
     save(); renderLog();
     return d;
+  }
+
+  // ---------- Sit log ----------
+  // Every sit is recorded, including the ones with no deer, so the movement score can be
+  // checked against what actually happened on this property.
+  const BUSTED = { no: 'No', winded: 'Winded me', saw: 'Saw / heard me' };
+  let sitMode = 'start', sitEditId = null, sitStandId = null, sightingContext = null, sitTimer = null;
+
+  const activeSit = () => store.sits.find((x) => x.id === store.activeSitId && !x.end) || null;
+  const standById = (id) => store.stands.find((x) => x.id === id);
+  const sitHours = (st) => Math.max(0, (new Date(st.end) - new Date(st.start)) / HOUR);
+
+  // What the app predicted for a window: average and best hourly movement score.
+  function predictionFor(start, end) {
+    if (!model || !model.hours.length) return null;
+    const idx = model.hours.map((h, i) => i).filter((i) => {
+      const t = model.hours[i].time.getTime();
+      return t + HOUR > start.getTime() && t < end.getTime();
+    }).filter((i) => model.scores[i] != null);
+    if (!idx.length) return null;
+    const sc = idx.map((i) => model.scores[i]);
+    return { avg: Math.round(sc.reduce((a, b) => a + b, 0) / sc.length), max: Math.max(...sc) };
+  }
+
+  function openSitSheet(mode, id) {
+    sitMode = mode;
+    sitEditId = id || null;
+    const sit = id ? store.sits.find((x) => x.id === id) : null;
+    const start = mode === 'start';
+    $('sitTitle').textContent = start ? 'Start a sit' : mode === 'end' ? 'End sit' : 'Edit sit';
+    $('sitSub').textContent = start ? 'Every sit counts, even the ones with no deer' : `${esc((standById(sit.standId) || {}).name || 'Stand')} · started ${fmtTime(new Date(sit.start))}`;
+    $('sitStandBlock').classList.toggle('hidden', !start);
+    $('sitRouteBlock').classList.toggle('hidden', !start);
+    $('sitEndFields').classList.toggle('hidden', start);
+    $('sitDelete').classList.toggle('hidden', start);
+    $('sitSubmit').textContent = start ? 'Start sit' : mode === 'end' ? 'End sit' : 'Save';
+    $('sitTimeLabel').textContent = start ? 'Started' : 'Ended';
+    $('sitTime').value = toLocalInput(sit && sit.end ? new Date(sit.end) : new Date());
+
+    if (start) {
+      if (!store.stands.length) { showToast('Add a stand first'); return; }
+      // Suggest the stand with the best wind right now.
+      const live = liveConditions();
+      const rank = { 'r-good': 0, 'r-marg': 1, 'r-unk': 2, 'r-bad': 3 };
+      const rated = nearbyStands().concat(store.stands.filter((x) => !nearbyStands().includes(x))).map((st) => ({ st, r: live ? rateStand(st, { dir: live.dir, speed: live.wind }, new Date()) : null }));
+      rated.sort((a, b) => (rank[a.r?.cls] ?? 2) - (rank[b.r?.cls] ?? 2));
+      sitStandId = rated[0].st.id;
+      $('sitStandList').innerHTML = rated.map(({ st, r }) => `<button type="button" class="list-row stand-choice" data-sit-stand="${st.id}">
+        <span class="tile ${r ? r.cls : 'r-unk'}">${icon('ladder')}</span>
+        <span class="row-text"><strong>${esc(st.name)}</strong><span>${r ? r.text : 'No wind data'}</span></span></button>`).join('');
+      selectSitStand(sitStandId);
+    } else {
+      const sg = store.sightings.filter((x) => x.sitId === sit.id);
+      const bucks = sg.filter((x) => x.kind === 'buck').reduce((a, x) => a + x.count, 0);
+      const others = sg.filter((x) => x.kind !== 'buck').reduce((a, x) => a + x.count, 0);
+      $('sitBucks').value = sit.end ? sit.bucks : bucks;
+      $('sitDoes').value = sit.end ? sit.does : others;
+      $('sitFromSightings').textContent = sg.length ? `${sg.length} sighting${sg.length > 1 ? 's' : ''} logged during this sit` : '';
+      fillChips('sitBusted', BUSTED, sit.busted || 'no');
+      $('sitNotes').value = sit.notes || '';
+    }
+    updateSitSnap();
+    $('sitDialog').showModal();
+  }
+
+  function selectSitStand(id) {
+    sitStandId = id;
+    $('sitStandList').querySelectorAll('.stand-choice').forEach((b) => b.classList.toggle('on', b.dataset.sitStand === id));
+    const st = standById(id);
+    const live = liveConditions();
+    const entry = live ? entryFor(st, { dir: live.dir, speed: live.wind }, new Date()) : null;
+    $('sitRoute').innerHTML = '<option value="">Not sure / other</option>' + (st.routes || []).map((r) => `<option value="${r.id}">${esc(r.name)}${entry && entry.route === r ? ' (best for this wind)' : ''}</option>`).join('');
+    if (entry && entry.route) $('sitRoute').value = entry.route.id;
+  }
+
+  function updateSitSnap() {
+    const t = new Date($('sitTime').value);
+    if (isNaN(t)) { $('sitSnap').innerHTML = ''; return; }
+    const sit = sitEditId ? store.sits.find((x) => x.id === sitEditId) : null;
+    const pred = sit ? predictionFor(new Date(sit.start), t) : predictionFor(t, new Date(t.getTime() + 2 * HOUR));
+    $('sitSnap').innerHTML = `${snapText(snapshotAt(t))}${pred ? `<br>Predicted movement ${sit ? 'during this sit' : 'next 2 hours'}: <strong>${pred.avg}</strong> avg, ${pred.max} best` : ''}`;
+  }
+
+  function submitSit() {
+    const t = new Date($('sitTime').value);
+    if (isNaN(t)) { showToast('Pick a time'); return false; }
+    if (sitMode === 'start') {
+      if (activeSit()) { showToast('End your current sit first'); return false; }
+      const sit = { id: Date.now().toString(36), standId: sitStandId, routeId: $('sitRoute').value || null, start: t.toISOString(), end: null, startSnap: snapshotAt(t), bucks: 0, does: 0, busted: 'no', notes: '' };
+      store.sits.unshift(sit);
+      store.activeSitId = sit.id;
+      save(); render();
+      showToast(`Sit started at ${standById(sitStandId).name}. Good luck!`);
+      return true;
+    }
+    const sit = store.sits.find((x) => x.id === sitEditId);
+    if (t < new Date(sit.start)) { showToast('End time is before the start'); return false; }
+    sit.end = t.toISOString();
+    sit.bucks = Math.max(0, Number($('sitBucks').value) || 0);
+    sit.does = Math.max(0, Number($('sitDoes').value) || 0);
+    sit.busted = chipValue('sitBusted') || 'no';
+    sit.notes = $('sitNotes').value.trim().slice(0, 300);
+    sit.endSnap = snapshotAt(t) || sit.endSnap || null;
+    sit.pred = predictionFor(new Date(sit.start), t) || sit.pred || null;
+    if (store.activeSitId === sit.id) store.activeSitId = null;
+    save(); render();
+    if (sitMode === 'end') showToast(`Sit logged: ${sitHours(sit).toFixed(1)} hrs, ${sit.bucks + sit.does} deer`);
+    return true;
+  }
+
+  function updateSitBar() {
+    const sit = activeSit();
+    $('startSitBtn').innerHTML = sit ? `${icon('stop')} End sit` : `${icon('play')} Start a sit`;
+    document.body.classList.toggle('sitting', !!sit);
+    $('sitBar').classList.toggle('hidden', !sit);
+    clearInterval(sitTimer);
+    if (!sit) return;
+    const tick = () => {
+      const mins = Math.max(0, Math.floor((Date.now() - new Date(sit.start)) / 60000));
+      $('sitBarStand').textContent = (standById(sit.standId) || {}).name || 'On stand';
+      $('sitBarTime').textContent = mins >= 12 * 60 ? `${Math.floor(mins / 60)}h. Forgot to end it?` : `On stand ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`;
+    };
+    tick();
+    sitTimer = setInterval(tick, 30000);
+  }
+
+  function sitLine(sit) {
+    const st = standById(sit.standId);
+    const s0 = new Date(sit.start);
+    const deer = sit.bucks + sit.does;
+    const w = sit.startSnap ? `${dirName(sit.startSnap.dir)} ${fmtWind(sit.startSnap.wind)}` : '';
+    return {
+      title: `${esc(st ? st.name : 'Stand')} · ${sit.end ? `${deer} deer${sit.bucks ? ` (${sit.bucks} buck${sit.bucks > 1 ? 's' : ''})` : ''}` : 'in progress'}`,
+      sub: `${s0.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${fmtTime(s0)}${sit.end ? ` – ${fmtTime(new Date(sit.end))} (${sitHours(sit).toFixed(1)} h)` : ''}`,
+      meta: [w, sit.pred ? `Score ${sit.pred.avg}` : '', sit.busted && sit.busted !== 'no' ? BUSTED[sit.busted] : ''].filter(Boolean).join(' · '),
+    };
+  }
+
+  function renderSits() {
+    $('sitList').innerHTML = store.sits.length ? store.sits.map((sit) => {
+      const l = sitLine(sit);
+      const cls = !sit.end ? 'accent' : sit.bucks ? 'target' : sit.does ? 'r-good' : 'r-unk';
+      return `<div class="list-row" data-sit="${sit.id}">
+        <span class="tile ${cls}">${icon(sit.end ? 'ladder' : 'play')}</span>
+        <span class="row-text"><strong>${l.title}</strong><span>${l.sub}</span>${l.meta ? `<span>${l.meta}</span>` : ''}${sit.notes ? `<span>${esc(sit.notes)}</span>` : ''}</span>
+        <svg class="ic chev"><use href="#i-chev-r"/></svg></div>`;
+    }).join('') : '<p class="empty">No sits yet. Tap Start a sit when you get in the stand.</p>';
+    renderScorecard();
+    updateSitBar();
+  }
+
+  // Deer seen per hour, grouped by what the app predicted: does a higher score mean more deer here?
+  function renderScorecard() {
+    const done = store.sits.filter((x) => x.end && sitHours(x) >= 0.25);
+    const el = $('scorecard');
+    if (!done.length) { el.innerHTML = ''; return; }
+    const groups = [['High score (65+)', (p) => p >= 65], ['Medium (50–64)', (p) => p >= 50 && p < 65], ['Low (under 50)', (p) => p < 50]];
+    const rows = groups.map(([label, test]) => {
+      const g = done.filter((x) => x.pred && test(x.pred.avg));
+      const hrs = g.reduce((a, x) => a + sitHours(x), 0);
+      const deer = g.reduce((a, x) => a + x.bucks + x.does, 0);
+      const bucks = g.reduce((a, x) => a + x.bucks, 0);
+      return { label, n: g.length, rate: hrs ? deer / hrs : null, brate: hrs ? bucks / hrs : null };
+    });
+    const maxRate = Math.max(0.5, ...rows.map((r) => r.rate || 0));
+    const totalHrs = done.reduce((a, x) => a + sitHours(x), 0);
+    const totalDeer = done.reduce((a, x) => a + x.bucks + x.does, 0);
+    const stands = store.stands.map((st) => {
+      const g = done.filter((x) => x.standId === st.id);
+      if (!g.length) return null;
+      const hrs = g.reduce((a, x) => a + sitHours(x), 0);
+      const deer = g.reduce((a, x) => a + x.bucks + x.does, 0);
+      const winds = g.filter((x) => x.startSnap && x.bucks + x.does > 0).map((x) => DIRS8[Math.round(x.startSnap.dir / 45) % 8]);
+      const c = {}; winds.forEach((w) => { c[w] = (c[w] || 0) + 1; });
+      const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+      return `<div class="list-row static"><span class="tile">${icon('ladder')}</span><span class="row-text"><strong>${esc(st.name)}</strong>
+        <span>${g.length} sit${g.length > 1 ? 's' : ''} · ${hrs.toFixed(1)} h · ${(deer / hrs).toFixed(1)} deer/hr · ${g.reduce((a, x) => a + x.bucks, 0)} bucks${best ? ` · deer most often on ${best[0]} wind` : ''}</span></span></div>`;
+    }).filter(Boolean).join('');
+    el.innerHTML = `<h3 class="section">How's the score doing?</h3>
+      <div class="card">
+        <p class="muted small" style="margin-top:0">${done.length} sit${done.length > 1 ? 's' : ''}, ${totalHrs.toFixed(1)} hours, ${totalDeer} deer. ${done.length < 15 ? 'Fewer than 15 sits is mostly noise. Keep logging every sit, including the empty ones.' : 'If high-score sits produce more deer per hour, the score is working on your property.'}</p>
+        <div class="score-bars">${rows.map((r) => `<div class="score-bar"><span>${r.label}<br><span class="muted small">${r.n} sit${r.n === 1 ? '' : 's'}</span></span>
+          <span class="track"><span style="width:${r.rate != null ? Math.max(3, (r.rate / maxRate) * 100) : 0}%;background:var(--orange)"></span></span>
+          <b>${r.rate != null ? `${r.rate.toFixed(1)}/hr` : '—'}</b></div>`).join('')}</div>
+      </div>
+      ${stands ? `<h3 class="section">By stand</h3><div class="card flush">${stands}</div>` : ''}`;
+  }
+
+  function sawDeerDuringSit() {
+    const sit = activeSit();
+    if (!sit) return;
+    const st = standById(sit.standId);
+    sightingContext = { sitId: sit.id, from: sit.standId };
+    showView('map');
+    setTimeout(() => {
+      if (st) map.setView([st.lat, st.lon], 17);
+      setPlacing('sighting');
+    }, 60);
   }
 
   // ---------- Events ----------
@@ -1613,7 +1820,26 @@
       $('sgDeer').value = d.id;
     });
     $('sightingForm').addEventListener('submit', (e) => { e.preventDefault(); if (saveSighting()) $('sightingDialog').close(); });
-    $('sightingClose').addEventListener('click', () => { pendingSighting = null; $('sightingDialog').close(); });
+    $('sightingClose').addEventListener('click', () => { pendingSighting = null; sightingContext = null; $('sightingDialog').close(); });
+    // Sit log
+    $('startSitBtn').addEventListener('click', () => (activeSit() ? openSitSheet('end', activeSit().id) : openSitSheet('start')));
+    $('sitEndBtn').addEventListener('click', () => { const a = activeSit(); if (a) openSitSheet('end', a.id); });
+    $('sitSawDeer').addEventListener('click', sawDeerDuringSit);
+    $('sitStandList').addEventListener('click', (e) => { const b = e.target.closest('[data-sit-stand]'); if (b) selectSitStand(b.dataset.sitStand); });
+    $('sitTime').addEventListener('change', updateSitSnap);
+    $('sitBusted').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-v]');
+      if (!b) return;
+      $('sitBusted').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    });
+    $('sitForm').addEventListener('submit', (e) => { e.preventDefault(); if (submitSit()) $('sitDialog').close(); });
+    $('sitClose').addEventListener('click', () => $('sitDialog').close());
+    $('sitDelete').addEventListener('click', () => {
+      if (!confirm('Delete this sit?')) return;
+      store.sits = store.sits.filter((x) => x.id !== sitEditId);
+      if (store.activeSitId === sitEditId) store.activeSitId = null;
+      save(); $('sitDialog').close(); render();
+    });
     $('sgDelete').addEventListener('click', () => {
       if (!confirm('Delete this sighting?')) return;
       store.sightings = store.sightings.filter((x) => x.id !== editingSightingId);
@@ -1682,6 +1908,8 @@
         save(); render();
         return;
       }
+      const sitRow = e.target.closest('[data-sit]');
+      if (sitRow) { const x = store.sits.find((y) => y.id === sitRow.dataset.sit); if (x) openSitSheet(x.end ? 'edit' : 'end', x.id); return; }
       const sm = e.target.closest('[data-sight-map]');
       if (sm) {
         const sg = store.sightings.find((x) => x.id === sm.dataset.sightMap);
@@ -1779,7 +2007,7 @@
             id: String(x.id), time: new Date(x.time).toISOString(), kind: x.kind, lat: x.lat, lon: x.lon,
             count: Math.max(1, Math.min(50, Number(x.count) || 1)), deerId: x.deerId ? String(x.deerId) : null,
             activity: ACTIVITIES[x.activity] ? x.activity : null, heading: typeof x.heading === 'number' ? x.heading : null,
-            from: String(x.from || 'house'), notes: String(x.notes || '').slice(0, 300),
+            from: String(x.from || 'house'), notes: String(x.notes || '').slice(0, 300), sitId: x.sitId ? String(x.sitId) : null,
             snap: x.snap && typeof x.snap === 'object' ? {
               temp: +x.snap.temp, wind: +x.snap.wind, dir: +x.snap.dir, gust: +x.snap.gust, pressure: +x.snap.pressure,
               trend: x.snap.trend == null ? null : +x.snap.trend, code: +x.snap.code, score: x.snap.score == null ? null : +x.snap.score,
@@ -1787,6 +2015,19 @@
             } : null,
           }));
         store.sightings.sort((a, b) => new Date(b.time) - new Date(a.time));
+        const sitIds = new Set(store.sits.map((x) => x.id));
+        const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+        const snapIn = (x) => (x && typeof x === 'object' ? { temp: num(x.temp), wind: num(x.wind), dir: num(x.dir), gust: num(x.gust), pressure: num(x.pressure), trend: num(x.trend), code: num(x.code), score: num(x.score), moon: String(x.moon || ''), sun: String(x.sun || ''), sunPhase: ['dawn', 'dusk', 'midday'].includes(x.sunPhase) ? x.sunPhase : 'midday' } : null);
+        (Array.isArray(data.sits) ? data.sits : []).filter((x) => x && x.id && !sitIds.has(String(x.id)) && !isNaN(new Date(x.start)) && x.end && !isNaN(new Date(x.end)))
+          .forEach((x) => store.sits.push({
+            id: String(x.id), standId: String(x.standId || ''), routeId: x.routeId ? String(x.routeId) : null,
+            start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString(),
+            bucks: Math.max(0, Math.min(99, Number(x.bucks) || 0)), does: Math.max(0, Math.min(99, Number(x.does) || 0)),
+            busted: BUSTED[x.busted] ? x.busted : 'no', notes: String(x.notes || '').slice(0, 300),
+            startSnap: snapIn(x.startSnap), endSnap: snapIn(x.endSnap),
+            pred: x.pred && typeof x.pred === 'object' ? { avg: num(x.pred.avg), max: num(x.pred.max) } : null,
+          }));
+        store.sits.sort((a, b) => new Date(b.start) - new Date(a.start));
         if (!hasLoc() && data.settings && typeof data.settings.lat === 'number' && typeof data.settings.lon === 'number') { store.settings.lat = data.settings.lat; store.settings.lon = data.settings.lon; lookupPlaceName(store.settings.lat, store.settings.lon); }
         save(); fillSettings(); buildModel(); render(); fetchForecast();
         showToast(`Imported ${added.length} stand(s)`);

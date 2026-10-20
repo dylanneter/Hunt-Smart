@@ -71,6 +71,9 @@
       <symbol id="i-binoculars" viewBox="0 0 24 24"><path d="M10 10h4M19 7V4a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v3M20 21a2 2 0 0 0 2-2v-3.85c0-1.5-.47-2.96-1.36-4.17L19 8.5V7H15v13a1 1 0 0 0 1 1ZM9 7V4a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v3M4 21a2 2 0 0 1-2-2v-3.85c0-1.5.47-2.96 1.36-4.17L5 8.5V7h4v13a1 1 0 0 1-1 1ZM15 13H9"/></symbol>
       <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.2-6.2 3.2L7 14.2 2 9.3l6.9-1Z"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9Z"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-3M12 16V8M17 16v-6"/></symbol>
     </defs>
   </svg>
 
@@ -222,7 +225,10 @@
     <section id="view-log" class="view">
       <h1 class="page-title">Hunt Log</h1>
       <p class="page-sub">Every sighting saves the wind, weather and moon so patterns show up over time.</p>
-      <button class="btn orange wide" id="logSightingBtn"><svg class="ic"><use href="#i-binoculars"/></svg> Log a sighting</button>
+      <div class="log-actions">
+        <button class="btn orange wide" id="startSitBtn"><svg class="ic"><use href="#i-play"/></svg> Start a sit</button>
+        <button class="btn ghost wide" id="logSightingBtn"><svg class="ic"><use href="#i-binoculars"/></svg> Log a sighting</button>
+      </div>
 
       <h3 class="section">Target bucks</h3>
       <div class="card flush">
@@ -234,6 +240,11 @@
       </div>
 
       <div id="patternBlock"></div>
+
+      <div id="scorecard"></div>
+
+      <h3 class="section">Sits</h3>
+      <div class="card flush" id="sitList"></div>
 
       <h3 class="section">Sightings</h3>
       <div class="filter-row" id="logFilter"></div>
@@ -324,9 +335,15 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 8 (Accuracy &amp; terrain)</p>
+      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 9 (Sit log)</p>
     </section>
   </main>
+
+  <div class="sit-bar hidden" id="sitBar">
+    <div class="sit-bar-text"><span class="live-dot live"></span><span><strong id="sitBarStand">On stand</strong><span id="sitBarTime">0:00</span></span></div>
+    <button class="btn ghost" id="sitSawDeer"><svg class="ic sm"><use href="#i-binoculars"/></svg> Saw deer</button>
+    <button class="btn orange" id="sitEndBtn"><svg class="ic sm"><use href="#i-stop"/></svg> End</button>
+  </div>
 
   <nav class="tabbar">
     <button data-view="today" class="active"><svg class="ic"><use href="#i-forecast"/></svg><span>Forecast</span></button>
@@ -396,6 +413,38 @@
         </div>
         <div id="locResults" class="list"></div>
         <p class="muted small">Place search © OpenStreetMap contributors.</p>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="sitDialog" class="sheet">
+    <form method="dialog" id="sitForm">
+      <div class="grab"></div>
+      <div class="sheet-head">
+        <div><h2 id="sitTitle">Start a sit</h2><p class="sheet-sub" id="sitSub">Every sit counts, even the ones with no deer</p></div>
+        <button type="button" class="icon-btn plain" id="sitClose" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="field-block" id="sitStandBlock"><span>Stand</span><div class="list" id="sitStandList"></div></div>
+        <label class="field-block" id="sitRouteBlock"><span>Route in</span><select id="sitRoute"></select></label>
+        <label class="field-block"><span id="sitTimeLabel">Started</span><input id="sitTime" type="datetime-local" required></label>
+        <div id="sitEndFields" class="sheet-body-inner">
+          <div class="field-block"><span>Deer seen</span>
+            <div class="counter-row">
+              <label class="counter"><span>Bucks</span><input id="sitBucks" type="number" min="0" max="99" value="0" inputmode="numeric"></label>
+              <label class="counter"><span>Does &amp; fawns</span><input id="sitDoes" type="number" min="0" max="99" value="0" inputmode="numeric"></label>
+            </div>
+            <div class="muted small" id="sitFromSightings"></div>
+          </div>
+          <div class="field-block"><span>Busted?</span><div class="chips" id="sitBusted"></div></div>
+          <label class="field-block"><span>Notes</span><textarea id="sitNotes" rows="2" maxlength="300"></textarea></label>
+        </div>
+        <div class="snap" id="sitSnap"></div>
+      </div>
+      <div class="sheet-foot">
+        <button type="button" id="sitDelete" class="btn ghost danger-text">Delete</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn" id="sitSubmit">Start sit</button>
       </div>
     </form>
   </dialog>

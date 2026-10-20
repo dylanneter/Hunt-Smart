@@ -485,3 +485,33 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 .ev-sources { padding: 14px 16px 4px; font-size: 0.82rem; color: var(--muted); }
 .ev-sources a { display: block; margin: 6px 0; }
 .hillshade-layer { mix-blend-mode: multiply; }
+
+/* Sit log */
+.log-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.log-actions .btn.wide { font-size: 0.98rem; padding: 14px 10px; }
+.sit-bar {
+  position: fixed; z-index: 999; left: var(--tab-gap); right: var(--tab-gap); max-width: 520px; margin: 0 auto;
+  bottom: calc(var(--tab-h) + var(--tab-gap) * 2 + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 20px;
+  background: var(--glass); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); border: 1px solid var(--line);
+}
+.sit-bar-text { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sit-bar-text > span:last-child { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.sit-bar-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sitBarTime { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sit-bar .btn { padding: 10px 12px; display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; }
+body.sitting { padding-bottom: calc(var(--tab-h) + var(--tab-gap) * 3 + 64px + env(safe-area-inset-bottom)); }
+body.sitting.map-mode { padding-bottom: 0; }
+body.sitting .map-bottom { bottom: calc(var(--tab-h) + var(--tab-gap) * 3 + 64px + env(safe-area-inset-bottom)); }
+.sheet-body-inner { display: flex; flex-direction: column; gap: 16px; }
+.counter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.counter { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.counter input { font-size: 1.4rem; font-weight: 700; text-align: center; }
+.stand-choice .tile { width: 44px; height: 44px; }
+.stand-choice.on { background: var(--card2); border-radius: 14px; outline: 2px solid var(--orange); }
+.sheet-body .stand-choice { padding: 10px; }
+.score-bars { display: flex; flex-direction: column; gap: 10px; }
+.score-bar { display: grid; grid-template-columns: 110px 1fr 70px; gap: 10px; align-items: center; font-size: 0.88rem; }
+.score-bar .track { height: 10px; background: var(--card2); border-radius: 99px; overflow: hidden; }
+.score-bar .track span { display: block; height: 100%; border-radius: 99px; }
+.score-bar b { text-align: right; font-variant-numeric: tabular-nums; }

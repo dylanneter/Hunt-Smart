@@ -8,7 +8,8 @@ A free hunting forecast app for private land. Pin your tree stands, then see whi
 - **Best windows**: the highest-scoring stretches inside legal shooting light.
 - **Tree stands on a satellite map**: tap to add a stand, drag to move it, and mark the winds that work for it. Each stand shows a **scent cone** drawn downwind and colored green/yellow/red for the forecast hour. A slider steps through the next 7 days hour by hour.
 - **Which stand to sit**: morning and evening wind ratings for every stand.
-- **Weather & wind**: current conditions, hourly strip, morning/evening sit winds, gusts, precipitation and humidity.
+- **Live weather & wind**: refreshes automatically every 10 minutes while the app is open, and again when you reopen it or regain signal. A status dot shows Live / stale / offline, and a banner pops up when the wind shifts 45° or more. On the map, the slider starts at **Now** (live wind); the stand picker adds a **Right now** column.
+- **Weather & wind**: hourly strip, morning/evening sit winds, gusts, precipitation and humidity.
 - **Sun**: legal light start/end (adjustable for your state), sunrise, sunset, solar noon.
 - **Moon**: phase, illumination, moonrise/set, and moon overhead/underfoot.
 - **Solunar feeding times**: major and minor periods, flagged when they line up with sunrise or sunset.

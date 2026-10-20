@@ -5,6 +5,9 @@
   const HOUR = 3600 * 1000;
   const STORE_KEY = 'huntsmart.v1';
   const FORECAST_KEY = 'huntsmart.forecast.v1';
+  // Open-Meteo refreshes current conditions every 15 minutes; poll a bit faster so we catch each update.
+  const REFRESH_MS = 10 * 60 * 1000;
+  const STALE_MS = 30 * 60 * 1000;
   const DIRS8 = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   const DIRS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
@@ -31,6 +34,7 @@
   let model = null; // computed hours/days
   let selectedDay = 0;
   let mapHour = 0;
+  let refreshTimer = null, fetching = false, lastError = null;
   let map = null, standLayer = null, coneLayer = null, addingStand = false, pendingLatLng = null, editingId = null;
 
   function defaultRut() {
@@ -111,32 +115,82 @@
     if (!hasLoc()) return;
     const { lat, lon } = store.settings;
     const cached = readCachedForecast();
-    const fresh = cached && cached.lat === lat && cached.lon === lon && Date.now() - cached.fetchedAt < 30 * 60 * 1000;
-    if (cached && cached.lat === lat && cached.lon === lon) { forecast = cached; buildModel(); render(); }
-    if (fresh && !force) return;
+    const fresh = cached && cached.lat === lat && cached.lon === lon && Date.now() - cached.fetchedAt < REFRESH_MS;
+    if (!forecast && cached && cached.lat === lat && cached.lon === lon) { forecast = cached; buildModel(); render(); }
+    if ((fresh && !force) || fetching) return;
 
     const hourly = 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m';
     const current = 'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m';
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
       + `&hourly=${hourly}&current=${current}&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch`
       + `&timezone=auto&timeformat=unixtime&past_days=2&forecast_days=8`;
+    fetching = true;
     $('refreshBtn').classList.add('spin');
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Weather service returned ${res.status}`);
       const data = await res.json();
+      if (!data.hourly || !data.current) throw new Error('Unexpected response from weather service');
+      const prev = forecast && forecast.lat === lat && forecast.lon === lon ? forecast.data.current : null;
       forecast = { lat, lon, fetchedAt: Date.now(), data };
+      lastError = null;
       try { localStorage.setItem(FORECAST_KEY, JSON.stringify(forecast)); } catch (e) { /* ignore */ }
       showBanner(null);
       buildModel();
       render();
+      announceWindShift(prev, data.current);
     } catch (err) {
+      lastError = err;
       if (forecast) showBanner(`Offline – showing forecast from ${new Date(forecast.fetchedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`, 'warn');
       else showBanner(`Couldn't load weather: ${err.message}. Sun and moon times still work.`, 'warn');
       if (!forecast) { buildModel(); render(); }
     } finally {
+      fetching = false;
       $('refreshBtn').classList.remove('spin');
+      renderLiveStatus();
     }
+  }
+
+  // Keep pulling fresh conditions while the app is open; pause when it's in the background.
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    refreshTimer = setInterval(() => {
+      if (document.hidden) return;
+      fetchForecast();
+      renderLiveStatus();
+    }, 30 * 1000);
+  }
+  function stopAutoRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+
+  function renderLiveStatus() {
+    const el = $('updated');
+    if (!forecast) { el.innerHTML = ''; return; }
+    const age = Date.now() - forecast.fetchedAt;
+    const mins = Math.floor(age / 60000);
+    const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)}h ago`;
+    let cls = 'live', text = `Live · ${ago}`;
+    if (!navigator.onLine || (lastError && age > REFRESH_MS)) { cls = 'offline'; text = `Offline · ${ago}`; }
+    else if (age > STALE_MS) { cls = 'stale'; text = `Updated ${ago}`; }
+    el.innerHTML = `<span class="live-dot ${cls}"></span>${text}`;
+  }
+
+  function announceWindShift(prev, cur) {
+    if (!prev || !cur || prev.wind_direction_10m == null || cur.wind_direction_10m == null) return;
+    if (cur.wind_speed_10m < 3 && prev.wind_speed_10m < 3) return;
+    if (angDiff(prev.wind_direction_10m, cur.wind_direction_10m) < 45) return;
+    showToast(`Wind shifted ${dirName(prev.wind_direction_10m)} → ${dirName(cur.wind_direction_10m)} (${fmtWind(cur.wind_speed_10m)})`);
+  }
+
+  let toastTimer = null;
+  function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add('hidden'), 6000);
   }
 
   function readCachedForecast() {
@@ -161,7 +215,7 @@
         });
       }
       const c = forecast.data.current;
-      if (c) current = { temp: c.temperature_2m, feels: c.apparent_temperature, rh: c.relative_humidity_2m, code: c.weather_code, pressure: c.pressure_msl, wind: c.wind_speed_10m, dir: c.wind_direction_10m, gust: c.wind_gusts_10m };
+      if (c) current = { time: new Date(c.time * 1000), temp: c.temperature_2m, feels: c.apparent_temperature, rh: c.relative_humidity_2m, code: c.weather_code, pressure: c.pressure_msl, wind: c.wind_speed_10m, dir: c.wind_direction_10m, gust: c.wind_gusts_10m };
     }
 
     const dayCache = {};
@@ -193,7 +247,7 @@
     renderWeek();
     renderStandList();
     if (map) renderMapLayers();
-    if (forecast) $('updated').textContent = `Updated ${new Date(forecast.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    renderLiveStatus();
   }
 
   function renderDayPicker() {
@@ -258,7 +312,7 @@
       const temps = dayHours.map((h) => h.temp);
       const precip = dayHours.reduce((s, h) => s + (h.precip || 0), 0);
       const maxProb = Math.max(...dayHours.map((h) => h.precipProb || 0));
-      const c = selectedDay === 0 && model.current ? model.current : null;
+      const c = selectedDay === 0 ? liveConditions() : null;
       const am = avgWind(hoursBetween(info.sunrise.getTime() - HOUR, info.sunrise.getTime() + 3 * HOUR));
       const pm = avgWind(hoursBetween(info.sunset.getTime() - 3 * HOUR, info.sunset.getTime() + HOUR));
       const wx = WMO[c ? c.code : mode(dayHours.map((h) => h.code))] || ['', ''];
@@ -269,7 +323,7 @@
             <div class="wx-temp">${c ? fmtTemp(c.temp) : `${fmtTemp(Math.max(...temps))} / ${fmtTemp(Math.min(...temps))}`}</div>
             <div class="muted small">${esc(wx[0])}${c ? ` · feels ${fmtTemp(c.feels)} · H ${fmtTemp(Math.max(...temps))} L ${fmtTemp(Math.min(...temps))}` : ''}</div>
           </div>
-          ${c ? `<div class="wx-wind">${arrowSvg(c.dir, 28)}<div><strong>${dirName(c.dir)} ${fmtWind(c.wind)}</strong><div class="muted small">gusts ${fmtWind(c.gust)}</div></div></div>` : ''}
+          ${c ? `<div class="wx-wind">${arrowSvg(c.dir, 28)}<div><strong>${dirName(c.dir)} ${fmtWind(c.wind)}</strong><div class="muted small">gusts ${fmtWind(c.gust)}</div><div class="muted small">as of ${fmtTime(c.time)}</div></div></div>` : ''}
         </div>
         <div class="wx-sits">
           ${am ? `<div><span class="muted small">Morning sit</span><br>${arrowSvg(am.dir)} <strong>${dirName(am.dir)} ${fmtWind(am.speed)}</strong></div>` : ''}
@@ -382,11 +436,17 @@
     const am = avgWind(hoursBetween(info.sunrise.getTime() - HOUR, info.sunrise.getTime() + 3 * HOUR));
     const pm = avgWind(hoursBetween(info.sunset.getTime() - 3 * HOUR, info.sunset.getTime() + HOUR));
     const rank = { 'r-good': 0, 'r-marg': 1, 'r-unk': 2, 'r-bad': 3 };
-    const rows = store.stands.map((s) => ({ s, a: am ? windRating(s, am.dir, am.speed) : null, p: pm ? windRating(s, pm.dir, pm.speed) : null }));
-    rows.sort((r1, r2) => (rank[r1.a?.cls] ?? 4) + (rank[r1.p?.cls] ?? 4) - (rank[r2.a?.cls] ?? 4) - (rank[r2.p?.cls] ?? 4));
-    el.innerHTML = `<table class="picks"><thead><tr><th>Stand</th><th>Morning${am ? `<br><span class="muted small">${dirName(am.dir)} ${fmtWind(am.speed)}</span>` : ''}</th><th>Evening${pm ? `<br><span class="muted small">${dirName(pm.dir)} ${fmtWind(pm.speed)}</span>` : ''}</th></tr></thead><tbody>`
-      + rows.map(({ s, a, p }) => `<tr><td><strong>${esc(s.name)}</strong><br><span class="muted small">${s.goodWinds.length ? s.goodWinds.join(', ') : 'no winds set'}</span></td>
-        <td>${a ? `<span class="pill ${a.cls}">${a.text}</span>` : '—'}</td><td>${p ? `<span class="pill ${p.cls}">${p.text}</span>` : '—'}</td></tr>`).join('')
+    const live = selectedDay === 0 ? liveConditions() : null;
+    const rows = store.stands.map((s) => ({
+      s, n: live ? windRating(s, live.dir, live.wind) : null,
+      a: am ? windRating(s, am.dir, am.speed) : null, p: pm ? windRating(s, pm.dir, pm.speed) : null,
+    }));
+    const r = (x) => rank[x?.cls] ?? 4;
+    rows.sort((r1, r2) => (live ? r(r1.n) - r(r2.n) : 0) || r(r1.a) + r(r1.p) - r(r2.a) - r(r2.p));
+    const cell = (x) => `<td>${x ? `<span class="pill ${x.cls}">${x.text}</span>` : '—'}</td>`;
+    el.innerHTML = `<table class="picks"><thead><tr><th>Stand</th>${live ? `<th>Right now<br><span class="muted small">${dirName(live.dir)} ${fmtWind(live.wind)}</span></th>` : ''}<th>Morning${am ? `<br><span class="muted small">${dirName(am.dir)} ${fmtWind(am.speed)}</span>` : ''}</th><th>Evening${pm ? `<br><span class="muted small">${dirName(pm.dir)} ${fmtWind(pm.speed)}</span>` : ''}</th></tr></thead><tbody>`
+      + rows.map(({ s, n, a, p }) => `<tr><td><strong>${esc(s.name)}</strong><br><span class="muted small">${s.goodWinds.length ? s.goodWinds.join(', ') : 'no winds set'}</span></td>
+        ${live ? cell(n) : ''}${cell(a)}${cell(p)}</tr>`).join('')
       + '</tbody></table>';
   }
 
@@ -461,9 +521,23 @@
   }
 
   // ---------- Map ----------
+  // Slider slot 0 is live conditions; the rest are upcoming forecast hours.
   function mapHours() {
-    const now = Date.now() - HOUR;
-    return model ? model.hours.filter((h) => h.time.getTime() >= now) : [];
+    if (!model) return [];
+    const now = Date.now();
+    const future = model.hours.filter((h) => h.time.getTime() > now);
+    const live = liveConditions();
+    return live ? [live, ...future] : future;
+  }
+  function liveConditions() {
+    if (!model || !model.current) return null;
+    const c = model.current;
+    if (Date.now() - c.time > 3 * HOUR) return null; // cached and too old to call "now"
+    return { ...c, live: true };
+  }
+  function scoreAt(t) {
+    const i = model.hours.findIndex((h) => t >= h.time && t < h.time.getTime() + HOUR);
+    return i >= 0 ? model.scores[i] : null;
   }
   function currentMapWind() {
     const hs = mapHours();
@@ -530,7 +604,10 @@
         ? `<div class="wc-compass">${arrowSvg(h.dir, 34)}</div><div><strong>${dirName(h.dir)} ${fmtWind(h.wind)}</strong><br><span class="small">gust ${fmtWind(h.gust)} · ${fmtTemp(h.temp)}</span></div>`
         : '<span class="small">No wind data</span>';
     }
-    $('hourLabel').textContent = h ? `${h.time.toLocaleDateString([], { weekday: 'short' })} ${fmtHour(h.time)} · score ${model.scores[model.hours.indexOf(h)] ?? '–'}` : 'No forecast';
+    const sc = h ? (h.live ? scoreAt(Date.now()) : scoreAt(h.time)) : null;
+    $('hourLabel').textContent = h
+      ? `${h.live ? `Now · as of ${fmtTime(h.time)}` : `${h.time.toLocaleDateString([], { weekday: 'short' })} ${fmtHour(h.time)}`} · score ${sc ?? '–'}`
+      : 'No forecast';
 
     standLayer.clearLayers();
     coneLayer.clearLayers();
@@ -748,7 +825,12 @@
     });
 
     window.addEventListener('resize', () => { if (model) renderPressure(model.days[selectedDay].info); });
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchForecast(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { stopAutoRefresh(); return; }
+      renderLiveStatus(); fetchForecast(); startAutoRefresh();
+    });
+    window.addEventListener('online', () => fetchForecast(true));
+    window.addEventListener('offline', renderLiveStatus);
   }
 
   // ---------- Boot ----------
@@ -765,6 +847,7 @@
       $('quickLocate').onclick = useGps;
       useGps();
     }
+    startAutoRefresh();
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => { /* offline support unavailable */ });
     }

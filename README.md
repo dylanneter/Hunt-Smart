@@ -54,24 +54,34 @@ python3 -m http.server 8000
 
 ## How the movement score works
 
-Each hour starts from a base curve that peaks just after sunrise and just before sunset. Adjustments:
+Weights follow GPS-collar research on white-tailed deer rather than hunting folklore. Tap the **?** next to the score in the app for the same table with sources.
 
-| Factor | Effect |
-| --- | --- |
-| Solunar major / minor period | +14 / +8 |
-| Pressure rising after a front | +7; fast fall ahead of a storm +5 |
-| 10°F+ colder than the same hour yesterday | +10 (5°F: +5); warm swings subtract |
-| Hot (>65°F / >75°F) | −5 / −10 |
-| Wind >14 mph / >20 mph | −8 / −15 |
-| Heavy rain | −12; first hours after rain stops +8 |
-| Near new or full moon | +3 |
-| Rut phase (from your peak rut date) | +4 to +12, plus midday movement during the peak |
+| Factor | Effect on score | Evidence |
+| --- | --- | --- |
+| Time of day (dawn & dusk) | Up to +55 | Strong: the dominant pattern in every study |
+| Rut timing (from your peak rut date) | +4 to +12, plus midday movement at peak | Strong |
+| Temperature change vs yesterday | +5 to +9 cold snap, −2 to −8 warm/hot | Moderate: most consistent weather effect |
+| Barometric pressure trend | +2 to +3 | Mixed |
+| Rain | −6 heavy, +4 after it clears | Limited |
+| Solunar: moon overhead/underfoot only | +2 to +4 | Weak |
+| Wind | −4 only above 25 mph | Weak (wind matters for scent, handled by stand/route ratings) |
+| Moon phase | Not scored | No effect found |
 
-The day score blends the best morning hour, the best evening hour and the average across shooting light. These weights are rules of thumb, not a guarantee, so use them to compare days.
+Sources: [Penn State](https://www.psu.edu/news/research/story/research-focus-how-deer-respond-changes-moon-phase-weather), [Webb et al. 2010](https://doaj.org/article/98c06121b2744793be79f44614fcd27f), [Sullivan et al. 2016](https://seafwa.org/journal/2016/movement-moon-white-tailed-deer-activity-and-solunar-events), [Goethlich, Auburn](https://etd.auburn.edu/handle/10415/7077), [NC State](https://repository.lib.ncsu.edu/items/61a4d1f2-63c5-4c35-8169-e3be4adcff7d/full).
+
+The day score blends the best morning hour, the best evening hour and the average across shooting light. Weights are set by hand from these findings, not fitted to data.
+
+## Weather & terrain data
+
+- **Forecast**: NOAA National Blend of Models (NBM, 2.5 km, bias-corrected) first, then NOAA HRRR (3 km, hourly) blended with GFS, via Open-Meteo. Falls back to Open-Meteo's default blend if those aren't available (e.g. outside the US).
+- **Right now**: the latest reading from the nearest National Weather Service station (within 25 mi, under 90 minutes old), otherwise the model's current conditions. The Forecast page says which.
+- **Terrain**: AWS Terrain Tiles (USGS 3DEP, ~10 m in the US) for elevation, slope, which way the ground faces, and whether a stand sits on high ground, a side-hill or a bottom. Thermals are modeled as a downhill pull at night, dawn and dusk and an uphill pull midday, scaled by slope, and added to the wind to get the actual scent drift used by scent cones, stand ratings and route scoring.
+- **Map layers**: Satellite, Topo, Streets, USGS Topo (contours), plus a hillshade overlay.
 
 ## Credits
 
-- Weather: [Open-Meteo](https://open-meteo.com/) (free, no API key)
+- Weather: [Open-Meteo](https://open-meteo.com/) (NOAA NBM, HRRR, GFS) and [National Weather Service](https://www.weather.gov/documentation/services-web-api) observations
+- Elevation: [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (USGS 3DEP, SRTM and others); hillshade © Esri; USGS The National Map
 - Sun & moon math: [SunCalc](https://github.com/mourner/suncalc) (BSD-2)
 - Place search: [OpenStreetMap Nominatim](https://nominatim.org/)
 - Map: [Leaflet](https://leafletjs.com/) (BSD-2), Esri World Imagery, OpenStreetMap, OpenTopoMap

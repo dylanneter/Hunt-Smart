@@ -1,8 +1,8 @@
 /* Offline support: app shell is cached, weather is network-first, map tiles are cached as you view them. */
-const VERSION = 'hs-v7';
+const VERSION = 'hs-v8';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'js/app.js', 'js/astro.js', 'js/movement.js', 'js/routes.js',
+  'js/app.js', 'js/astro.js', 'js/movement.js', 'js/routes.js', 'js/terrain.js',
   'vendor/suncalc.js', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'vendor/leaflet/images/layers.png', 'vendor/leaflet/images/layers-2x.png',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
@@ -23,7 +23,7 @@ self.addEventListener('activate', (e) => {
 });
 
 function isTile(url) {
-  return /arcgisonline\.com|tile\.openstreetmap\.org|tile\.opentopomap\.org/.test(url.hostname);
+  return /arcgisonline\.com|tile\.openstreetmap\.org|tile\.opentopomap\.org|basemap\.nationalmap\.gov/.test(url.hostname) || url.pathname.includes('elevation-tiles-prod');
 }
 
 async function trimTiles() {

@@ -101,35 +101,90 @@
     return r;
   }
 
+  // ---------- Terrain & scent drift ----------
+  const ftOrM = (m) => (metric() ? `${Math.round(m)} m` : `${Math.round(m * 3.281)} ft`);
+  const POSITION = { ridge: 'on high ground', bottom: 'in low ground', 'side-hill': 'on a side-hill', flat: 'on flat ground' };
+
+  function groundAt(lat, lon) { return window.Terrain ? Terrain.describe(lat, lon) : null; }
+
+  // Where scent goes from a stand at time t: wind plus the slope's thermal pull.
+  function driftAt(st, wind, t) {
+    if (!wind || wind.dir == null) return null;
+    const g = groundAt(st.lat, st.lon);
+    const th = g && model ? Terrain.thermal(g, t, model.getDay(t)) : null;
+    return Terrain.scentDrift(wind, th) || { dir: wind.dir, speed: wind.speed, thermalShare: 0 };
+  }
+
+  // Stand rating from the actual scent drift; notes when thermals change the call.
+  function rateStand(st, wind, t) {
+    if (!wind || wind.dir == null) return null;
+    const d = driftAt(st, wind, t);
+    const r = windRating(st, d.dir, d.speed);
+    if (d.thermalShare > 0.3 && windRating(st, wind.dir, wind.speed).cls !== r.cls) r.text += ' (thermals)';
+    return r;
+  }
+
+  function groundText(g) {
+    if (!g) return '';
+    const face = g.aspect != null && g.slope >= 2 ? `${Math.round(g.slope)}° slope facing ${dirName(g.aspect)}` : 'level ground';
+    return `${ftOrM(g.elevation)} · ${face} · ${POSITION[g.position]}`;
+  }
+
+  // Fetch elevation tiles around everything on the map; re-render when new terrain arrives.
+  let terrainKey = '';
+  function ensureTerrain() {
+    if (!window.Terrain || !Terrain.available || !hasLoc()) return;
+    const pts = [[store.settings.lat, store.settings.lon], ...store.stands.map((x) => [x.lat, x.lon]),
+      ...store.stands.flatMap((x) => (x.routes || []).flatMap((r) => r.points))];
+    const key = pts.map((p) => p.map((v) => v.toFixed(4)).join(',')).join(';');
+    if (key === terrainKey) return;
+    terrainKey = key;
+    Terrain.ensure(pts, 220).then((changed) => { if (changed && model) render(); });
+  }
+
   // ---------- Forecast ----------
+  // Forecast models, best first. NBM is NOAA's bias-corrected National Blend (what NWS
+  // forecasters start from); gfs_seamless is HRRR (3 km, hourly) blended into GFS.
+  const MODELS = ['ncep_nbm_conus', 'gfs_seamless'];
+  const MODEL_NAMES = { ncep_nbm_conus: 'NOAA National Blend (NBM)', gfs_seamless: 'NOAA HRRR + GFS', '': 'Open-Meteo best match' };
+
   async function fetchForecast(force) {
     if (!hasLoc()) return;
     const { lat, lon } = store.settings;
     const cached = readCachedForecast();
     const fresh = cached && cached.lat === lat && cached.lon === lon && Date.now() - cached.fetchedAt < REFRESH_MS;
     if (!forecast && cached && cached.lat === lat && cached.lon === lon) { forecast = cached; buildModel(); render(); }
+    fetchObservation();
     if ((fresh && !force) || fetching) return;
 
     const hourly = 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m';
     const current = 'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m';
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
+    const base = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
       + `&hourly=${hourly}&current=${current}&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch`
       + `&timezone=auto&timeformat=unixtime&past_days=2&forecast_days=8`;
     fetching = true;
     $('refreshBtn').classList.add('spin');
     try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`Weather service returned ${res.status}`);
-      const data = await res.json();
-      if (!data.hourly || !data.current) throw new Error('Unexpected response from weather service');
-      const prev = forecast && forecast.lat === lat && forecast.lon === lon ? forecast.data.current : null;
+      let data = null;
+      // Ask for the NOAA models by name; if the service rejects that, fall back to its default blend.
+      for (const url of [`${base}&models=${MODELS.join(',')}`, base]) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`Weather service returned ${res.status}`);
+          const d = await res.json();
+          if (!d.hourly || !d.hourly.time) throw new Error('Unexpected response from weather service');
+          data = d;
+          break;
+        } catch (e) { if (url === base) throw e; }
+      }
+      const prev = model && model.current ? { ...model.current } : null;
       forecast = { lat, lon, fetchedAt: Date.now(), data };
       lastError = null;
       try { localStorage.setItem(FORECAST_KEY, JSON.stringify(forecast)); } catch (e) { /* ignore */ }
       showBanner(null);
       buildModel();
       render();
-      announceWindShift(prev, data.current);
+      announceWindShift(prev, model && model.current);
     } catch (err) {
       lastError = err;
       if (forecast) showBanner(`Offline – showing forecast from ${new Date(forecast.fetchedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`, 'warn');
@@ -140,6 +195,51 @@
       $('refreshBtn').classList.remove('spin');
       renderLiveStatus();
     }
+  }
+
+  // ---------- Measured "now" from the nearest National Weather Service station ----------
+  let observation = null, obsFetchedAt = 0;
+  async function fetchObservation() {
+    if (!hasLoc() || Date.now() - obsFetchedAt < 5 * 60 * 1000) return;
+    obsFetchedAt = Date.now();
+    const { lat, lon } = store.settings;
+    const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    const api = 'https://api.weather.gov';
+    const getJSON = async (u) => { const r = await fetch(u, { headers: { Accept: 'application/geo+json' } }); if (!r.ok) throw new Error(r.status); return r.json(); };
+    try {
+      let st = store.settings.nwsStations;
+      if (!st || st.key !== key) {
+        const pt = await getJSON(`${api}/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+        const list = await getJSON(pt.properties.observationStations);
+        const ids = (list.features || []).slice(0, 3).map((f) => ({
+          id: f.properties.stationIdentifier, name: f.properties.name,
+          km: L.latLng(lat, lon).distanceTo([f.geometry.coordinates[1], f.geometry.coordinates[0]]) / 1000,
+        }));
+        st = { key, ids };
+        store.settings.nwsStations = st; save();
+      }
+      const conv = (q, to) => {
+        if (!q || q.value == null) return null;
+        const u = q.unitCode || '';
+        if (to === 'mph') return u.includes('km_h') ? q.value / 1.609 : u.includes('m_s') ? q.value * 2.237 : q.value;
+        if (to === 'F') return u.includes('degC') ? q.value * 9 / 5 + 32 : q.value;
+        if (to === 'hPa') return u.includes('Pa') && !u.includes('hPa') ? q.value / 100 : q.value;
+        return q.value;
+      };
+      for (const s of st.ids) {
+        if (s.km > 40) break;
+        const o = (await getJSON(`${api}/stations/${s.id}/observations/latest`)).properties;
+        const time = new Date(o.timestamp);
+        if (Date.now() - time > 90 * 60 * 1000) continue; // stale station; try the next one
+        observation = {
+          time, station: s.id, stationName: s.name, km: s.km,
+          temp: conv(o.temperature, 'F'), wind: conv(o.windSpeed, 'mph'), dir: o.windDirection ? o.windDirection.value : null,
+          gust: conv(o.windGust, 'mph'), pressure: conv(o.seaLevelPressure, 'hPa') ?? conv(o.barometricPressure, 'hPa'), text: o.textDescription,
+        };
+        if (model) { renderHero(model.days[selectedDay].info); if (map) renderMapLayers(); }
+        return;
+      }
+    } catch (e) { /* outside the US, offline, or NWS unavailable: fall back to the model's current conditions */ }
   }
 
   // Keep pulling fresh conditions while the app is open; pause when it's in the background.
@@ -169,10 +269,10 @@
   }
 
   function announceWindShift(prev, cur) {
-    if (!prev || !cur || prev.wind_direction_10m == null || cur.wind_direction_10m == null) return;
-    if (cur.wind_speed_10m < 3 && prev.wind_speed_10m < 3) return;
-    if (angDiff(prev.wind_direction_10m, cur.wind_direction_10m) < 45) return;
-    showToast(`Wind shifted ${dirName(prev.wind_direction_10m)} → ${dirName(cur.wind_direction_10m)} (${fmtWind(cur.wind_speed_10m)})`);
+    if (!prev || !cur || prev.dir == null || cur.dir == null) return;
+    if (cur.wind < 3 && prev.wind < 3) return;
+    if (angDiff(prev.dir, cur.dir) < 45) return;
+    showToast(`Wind shifted ${dirName(prev.dir)} → ${dirName(cur.dir)} (${fmtWind(cur.wind)})`);
   }
 
   let toastTimer = null;
@@ -195,19 +295,43 @@
     const rut = rutPeak ? new Date(`${rutPeak}T12:00:00`) : null;
     const hours = [];
     let current = null;
+    const sources = {};
     if (forecast && forecast.data && forecast.data.hourly) {
       const h = forecast.data.hourly;
+      // With several models requested, each variable comes back once per model (temperature_2m_ncep_nbm_conus ...).
+      // Take the first model that has a value for that hour.
+      const pick = (obj, v, i) => {
+        for (const m of MODELS) { const a = obj[`${v}_${m}`]; const x = Array.isArray(a) ? a[i] : a; if (x != null) return [x, m]; }
+        const a = obj[v];
+        const x = Array.isArray(a) ? a[i] : a;
+        return [x ?? null, ''];
+      };
+      const nowMs = Date.now();
       for (let i = 0; i < h.time.length; i++) {
+        const g = (v) => pick(h, v, i)[0];
+        const t = new Date(h.time[i] * 1000);
+        if (Math.abs(t - nowMs) < HOUR / 2) {
+          sources.wind = MODEL_NAMES[pick(h, 'wind_speed_10m', i)[1]];
+          sources.temp = MODEL_NAMES[pick(h, 'temperature_2m', i)[1]];
+          sources.pressure = MODEL_NAMES[pick(h, 'pressure_msl', i)[1]];
+        }
         hours.push({
-          time: new Date(h.time[i] * 1000),
-          temp: h.temperature_2m[i], feels: h.apparent_temperature[i], rh: h.relative_humidity_2m[i],
-          precipProb: h.precipitation_probability[i], precip: h.precipitation[i], code: h.weather_code[i],
-          cloud: h.cloud_cover[i], pressure: h.pressure_msl[i], wind: h.wind_speed_10m[i],
-          dir: h.wind_direction_10m[i], gust: h.wind_gusts_10m[i],
+          time: t,
+          temp: g('temperature_2m'), feels: g('apparent_temperature'), rh: g('relative_humidity_2m'),
+          precipProb: g('precipitation_probability'), precip: g('precipitation'), code: g('weather_code'),
+          cloud: g('cloud_cover'), pressure: g('pressure_msl'), wind: g('wind_speed_10m'),
+          dir: g('wind_direction_10m'), gust: g('wind_gusts_10m'),
         });
       }
       const c = forecast.data.current;
-      if (c) current = { time: new Date(c.time * 1000), temp: c.temperature_2m, feels: c.apparent_temperature, rh: c.relative_humidity_2m, code: c.weather_code, pressure: c.pressure_msl, wind: c.wind_speed_10m, dir: c.wind_direction_10m, gust: c.wind_gusts_10m };
+      const cg = (v) => (c ? pick(c, v)[0] : null);
+      if (c && cg('wind_speed_10m') != null) {
+        current = { time: new Date(c.time * 1000), temp: cg('temperature_2m'), feels: cg('apparent_temperature'), rh: cg('relative_humidity_2m'), code: cg('weather_code'), pressure: cg('pressure_msl'), wind: cg('wind_speed_10m'), dir: cg('wind_direction_10m'), gust: cg('wind_gusts_10m') };
+      } else {
+        // No current block for this model mix: use the forecast hour we're in.
+        const hh = hours.find((x) => nowMs >= x.time && nowMs < x.time.getTime() + HOUR);
+        if (hh) current = { ...hh, time: new Date(nowMs) };
+      }
     }
 
     const dayCache = {};
@@ -228,7 +352,7 @@
       const summary = hours.length ? Movement.summarizeDay(info, hours, scores, { rutPeak: rut }) : null;
       days.push({ info, idx: dayIdx, summary });
     }
-    model = { hours, scores, days, current, getDay, rut };
+    model = { hours, scores, days, current, getDay, rut, sources };
   }
 
   // ---------- Rendering ----------
@@ -262,6 +386,7 @@
     renderLog();
     if (map) renderMapLayers();
     renderLiveStatus();
+    ensureTerrain();
   }
 
   function renderDayPicker() {
@@ -389,6 +514,10 @@
     setStreaks('miniStreaks', w ? w.dir : null, w ? w.wind : null);
     if (!day.idx.length) setStreaks('miniStreaks', null, null);
     renderMiniMap(w);
+    const src = [];
+    if (live && h && h.src) src.push(h.src);
+    if (model.sources && model.sources.wind) src.push(`Forecast: ${model.sources.wind}`);
+    $('heroSrc').textContent = src.join(' · ');
   }
 
   // Animated wind arrows drifting downwind over a map.
@@ -520,9 +649,10 @@
     const pm = avgWind(hoursBetween(info.sunset.getTime() - 3 * HOUR, info.sunset.getTime() + HOUR));
     const live = selectedDay === 0 ? liveConditions() : null;
     const rank = { 'r-good': 0, 'r-marg': 1, 'r-unk': 2, 'r-bad': 3 };
+    const amT = new Date(info.sunrise.getTime() + HOUR), pmT = new Date(info.sunset.getTime() - 1.5 * HOUR);
     const rows = store.stands.map((s) => ({
-      s, n: live ? windRating(s, live.dir, live.wind) : null,
-      a: am ? windRating(s, am.dir, am.speed) : null, p: pm ? windRating(s, pm.dir, pm.speed) : null,
+      s, n: live ? rateStand(s, { dir: live.dir, speed: live.wind }, new Date()) : null,
+      a: am ? rateStand(s, am, amT) : null, p: pm ? rateStand(s, pm, pmT) : null,
     }));
     const r = (x) => rank[x?.cls] ?? 4;
     rows.sort((r1, r2) => (live ? r(r1.n) - r(r2.n) : 0) || r(r1.a) + r(r1.p) - r(r2.a) - r(r2.p));
@@ -553,7 +683,7 @@
       return `<span class="entry-sub">${label} ${fmtTime(t)} · ${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}: ${what} <span class="pill ${e.cls}">${e.label}</span></span>`;
     };
     el.innerHTML = store.stands.map((st) => {
-      const a = entryFor(st, amW), p = entryFor(st, pmW);
+      const a = entryFor(st, amW, amT), p = entryFor(st, pmW, pmT);
       const cls = [a, p].filter(Boolean).sort((x, y) => y.score - x.score)[0]?.cls || 'r-unk';
       const hint = !(st.routes || []).length ? '<span>No routes drawn yet. Showing the best side to come in from.</span>' : '';
       return `<div class="list-row" data-edit="${st.id}">
@@ -583,7 +713,15 @@
     const maxWind = dayHours.length ? Math.max(...dayHours.map((h) => h.wind || 0)) : null;
     const rh = dayHours.length ? avg(dayHours.map((h) => h.rh)) : null;
     const row = (ic, title, text) => `<div class="list-row static"><span class="tile">${icon(ic)}</span><span class="row-text"><strong>${title}</strong><span>${text}</span></span></div>`;
-    const rows = [
+    // Stand-by-stand: what the slope under each stand does to scent this morning and evening.
+    const standRows = store.stands.filter((st) => nearbyStands().includes(st)).map((st) => {
+      const g = groundAt(st.lat, st.lon);
+      if (!g) return null;
+      if (g.aspect == null || g.slope < 2) return row('trees', esc(st.name), `${groundText(g)}. Little thermal pull here; wind decides where scent goes.`);
+      const down = dirName(g.aspect), up = dirName((g.aspect + 180) % 360);
+      return row('trees', esc(st.name), `${groundText(g)}. Morning: scent sinks downhill toward the <b>${down}</b> until ~${fmtTime(new Date(info.sunrise.getTime() + 1.5 * HOUR))}. Midday: it rises toward the <b>${up}</b>. Evening: downhill again from ~${fmtTime(new Date(info.sunset.getTime() - HOUR))}.`);
+    }).filter(Boolean);
+    const rows = [...standRows,
       row('sunrise', `Until ~${fmtTime(morningSwitch)}`, 'Cool air sinks. Scent pulls downhill into creek bottoms, so favor stands above deer travel.'),
       row('sun', 'Midday', 'Warming air rises and scent drifts uphill.'),
       row('sunset', `From ~${fmtTime(eveningSwitch)}`, 'Air cools and thermals fall again. Scent starts sliding downhill before dark.'),
@@ -625,7 +763,7 @@
     const cur = currentMapWind();
     const near = new Set(nearbyStands());
     el.innerHTML = store.stands.map((s) => {
-      const r = cur ? windRating(s, cur.dir, cur.wind) : null;
+      const r = cur ? rateStand(s, { dir: cur.dir, speed: cur.wind }, cur.live ? new Date() : cur.time) : null;
       return `<div class="list-row" data-edit="${s.id}">
         <span class="tile ${r ? r.cls : 'r-unk'}">${icon('ladder')}</span>
         <span class="row-text"><strong>${esc(s.name)}</strong><span>${s.goodWinds.length ? `Good: ${s.goodWinds.join(', ')}` : 'No good winds set'}${s.type ? ` · ${esc(s.type)}` : ''}${(s.routes || []).length ? ` · ${s.routes.length} route${s.routes.length > 1 ? 's' : ''}` : ''}</span>${near.has(s) ? '' : '<span class="hot">Far from your weather location. Move or delete it?</span>'}</span>
@@ -640,6 +778,7 @@
     sat: { name: 'Satellite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts: { maxZoom: 19, attribution: 'Imagery © Esri' } },
     topo: { name: 'Topo', url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png', opts: { maxZoom: 17, attribution: '© OpenStreetMap, © OpenTopoMap' } },
     streets: { name: 'Streets', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', opts: { maxZoom: 19, attribution: '© OpenStreetMap' } },
+    usgs: { name: 'USGS Topo', url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', opts: { maxZoom: 19, maxNativeZoom: 16, attribution: 'USGS The National Map' } },
   };
   const LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
   const tileLayer = (key) => L.tileLayer(TILES[key].url, TILES[key].opts);
@@ -657,7 +796,19 @@
     if (!model || !model.current) return null;
     const c = model.current;
     if (Date.now() - c.time > 3 * HOUR) return null; // cached and too old to call "now"
-    return { ...c, live: true };
+    const live = { ...c, live: true, src: model.sources && model.sources.wind ? `Forecast model: ${model.sources.wind}` : null };
+    // Prefer what a real station measured in the last 90 minutes.
+    const o = observation;
+    if (o && Date.now() - o.time < 90 * 60 * 1000) {
+      if (o.temp != null) live.temp = o.temp;
+      if (o.wind != null) { live.wind = o.wind; if (o.dir != null) live.dir = o.dir; }
+      if (o.gust != null) live.gust = o.gust;
+      if (o.pressure != null) live.pressure = o.pressure;
+      live.time = o.time;
+      live.measured = true;
+      live.src = `Measured at ${o.station} (${Math.round(o.km * 0.621)} mi away) at ${fmtTime(o.time)}`;
+    }
+    return live;
   }
   function scoreAt(t) {
     const i = model.hours.findIndex((h) => t >= h.time && t < h.time.getTime() + HOUR);
@@ -675,12 +826,14 @@
     map.attributionControl.setPrefix(false);
     setBaseLayer(store.settings.mapBase || 'sat');
     setLabels(!!store.settings.mapLabels);
+    setHillshade(!!store.settings.hillshade);
     routeLayer = L.layerGroup().addTo(map);
     coneLayer = L.layerGroup().addTo(map);
     standLayer = L.layerGroup().addTo(map);
     drawLayer = L.layerGroup().addTo(map);
     if (hasLoc()) frameArea(map, 13);
     map.on('click', (e) => { if (drawing) addDrawPoint(e.latlng); });
+    map.on('move', () => { if (placing) updateElevChip(); });
     setupSlider();
     renderMapLayers();
   }
@@ -692,6 +845,13 @@
     if (baseLayer) map.removeLayer(baseLayer);
     baseLayer = tileLayer(key).addTo(map);
     baseLayer.bringToBack();
+  }
+  let hillLayer = null;
+  function setHillshade(on) {
+    store.settings.hillshade = on; save();
+    if (!map) return;
+    if (hillLayer) { map.removeLayer(hillLayer); hillLayer = null; }
+    if (on) hillLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16, opacity: 0.45, className: 'hillshade-layer', attribution: 'Hillshade © Esri' }).addTo(map);
   }
   function setLabels(on) {
     store.settings.mapLabels = on; save();
@@ -710,6 +870,7 @@
       <button type="button" class="layer-opt ${store.settings.mapBase === k || (!store.settings.mapBase && k === 'sat') ? 'on' : ''}" data-layer="${k}">
         <img alt="" loading="lazy" src="${t.url.replace('{z}', z).replace('{x}', x).replace('{y}', y)}"><span>${t.name}</span></button>`).join('');
     $('labelsToggle').checked = !!store.settings.mapLabels;
+    $('hillshadeToggle').checked = !!store.settings.hillshade;
     $('streaksToggle').checked = store.settings.streaks !== false;
     $('suggestToggle').checked = store.settings.suggest !== false;
     $('sightingsToggle').checked = store.settings.showSightings !== false;
@@ -737,14 +898,18 @@
     layers.cones.clearLayers();
     if (layers.routes) layers.routes.clearLayers();
     const wind = h && h.wind != null ? { dir: h.dir, speed: h.wind } : null;
+    const t = h ? (h.live ? new Date() : h.time) : new Date();
     const RCOL = { 'r-good': '#6fcf5a', 'r-marg': '#e8c43d', 'r-bad': '#e5533d', 'r-unk': '#bbbbbb' };
 
     for (const s of store.stands) {
-      const r = h ? windRating(s, h.dir, h.wind) : { cls: 'r-unk', text: '' };
-      if (wind) {
-        const len = Math.min(500, 120 + h.wind * 25);
-        const half = h.wind < 4 ? 50 : h.wind < 8 ? 32 : 22;
-        const down = h.dir + 180;
+      const r = wind ? rateStand(s, wind, t) : { cls: 'r-unk', text: '' };
+      const drift = wind ? driftAt(s, wind, t) : null;
+      const ground = groundAt(s.lat, s.lon);
+      if (drift) {
+        // Scent cone follows the actual drift (wind + thermals), not just the wind.
+        const len = Math.min(500, 120 + drift.speed * 25);
+        const half = drift.speed < 4 ? 50 : drift.speed < 8 ? 32 : 22;
+        const down = drift.dir + 180;
         const pts = [[s.lat, s.lon]];
         for (let a = -half; a <= half; a += half / 6) pts.push(destPoint(s.lat, s.lon, down + a, len));
         L.polygon(pts, { color: RCOL[r.cls], weight: 1.5, fillColor: RCOL[r.cls], fillOpacity: 0.2, interactive: false }).addTo(layers.cones);
@@ -757,7 +922,7 @@
 
       // Entry routes, colored by how well they keep your scent off deer for this wind.
       if (layers.routes) {
-        const entry = entryFor(s, wind);
+        const entry = entryFor(s, wind, t);
         for (const rt of s.routes || []) {
           const sc = wind ? Routes.scoreRoute(rt.points, s, store.spots, wind) : null;
           const best = entry && entry.route === rt;
@@ -781,7 +946,8 @@
       });
       const mk = L.marker([s.lat, s.lon], { icon: icn, draggable: interactive, interactive }).addTo(layers.stands);
       if (interactive) {
-        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}${s.facing != null ? ` · Faces ${DIRS8[Math.round(s.facing / 45) % 8]}` : ''}</span><br><button class="btn" data-edit="${s.id}">Edit stand</button> <button class="btn ghost" data-route-for="${s.id}">Draw route</button>`);
+        const driftNote = drift && drift.thermalShare > 0.2 ? `<br><span class="small">Scent drifting ${dirName(drift.toward)} (wind + ${Terrain.thermal(ground, t, model.getDay(t)).phase === 'down' ? 'downhill' : 'uphill'} thermal)</span>` : '';
+        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}${driftNote}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}${s.facing != null ? ` · Faces ${DIRS8[Math.round(s.facing / 45) % 8]}` : ''}</span>${ground ? `<br><span class="small">${groundText(ground)}</span>` : ''}<br><button class="btn" data-edit="${s.id}">Edit stand</button> <button class="btn ghost" data-route-for="${s.id}">Draw route</button>`);
         mk.on('dragend', () => {
           const ll = mk.getLatLng();
           s.lat = ll.lat; s.lon = ll.lng; save(); render();
@@ -837,6 +1003,22 @@
     $('addStandBtn').classList.toggle('on', !!placing);
     const labels = { stand: 'Place stand here', sighting: 'Deer was here', 'move-sighting': 'Move pin here' };
     if (placing) $('placeConfirm').textContent = labels[placing] || `Place ${SPOT_TYPES[placing].label.toLowerCase()} here`;
+    $('elevChip').classList.toggle('hidden', !placing);
+    if (placing) updateElevChip();
+  }
+
+  // Ground under the crosshair while placing something.
+  let elevTimer = null;
+  function updateElevChip() {
+    clearTimeout(elevTimer);
+    elevTimer = setTimeout(() => {
+      if (!placing || !map || !window.Terrain || !Terrain.available) { $('elevChip').classList.add('hidden'); return; }
+      const c = map.getCenter();
+      Terrain.ensure([[c.lat, c.lng]], 200).then(() => {
+        const g = groundAt(c.lat, c.lng);
+        $('elevChip').textContent = g ? groundText(g) : 'Loading terrain…';
+      });
+    }, 150);
   }
 
   // ---------- Add to map ----------
@@ -930,8 +1112,9 @@
   }
 
   // Best entry for a stand at a given wind: the best drawn route, or a suggested approach side.
-  function entryFor(st, wind) {
+  function entryFor(st, wind, t) {
     if (!wind) return null;
+    if (t) { const d = driftAt(st, wind, t); wind = { dir: d.dir, speed: d.speed }; }
     const routes = (st.routes || []).map((r) => ({ r, sc: Routes.scoreRoute(r.points, st, store.spots, wind) })).filter((x) => x.sc);
     if (routes.length) {
       routes.sort((a, b) => b.sc.score - a.sc.score);
@@ -982,10 +1165,13 @@
     const routes = stand ? stand.routes || [] : [];
     const h = model ? currentMapWind() : null;
     el.innerHTML = routes.map((r) => {
-      const sc = h ? Routes.scoreRoute(r.points, stand, store.spots, { dir: h.dir, speed: h.wind }) : null;
+      const t = h ? (h.live ? new Date() : h.time) : null;
+      const d = h ? driftAt(stand, { dir: h.dir, speed: h.wind }, t) : null;
+      const sc = d ? Routes.scoreRoute(r.points, stand, store.spots, { dir: d.dir, speed: d.speed }) : null;
+      const cl = window.Terrain ? Terrain.climb(r.points) : null;
       return `<div class="list-row static">
         <span class="tile ${sc ? sc.cls : 'r-unk'}">${icon('route')}</span>
-        <span class="row-text"><strong>${esc(r.name)}</strong><span>${sc ? `${sc.label} ${h.live ? 'now' : 'at ' + fmtHourShort(h.time)} · ${sc.reason}` : `${Math.round(routeLength(r.points))} m`}</span></span>
+        <span class="row-text"><strong>${esc(r.name)}</strong><span>${sc ? `${sc.label} ${h.live ? 'now' : 'at ' + fmtHourShort(h.time)} · ${sc.reason}` : `${Math.round(routeLength(r.points))} m`}${cl ? ` · ↑${ftOrM(cl.up)} ↓${ftOrM(cl.down)}` : ''}</span></span>
         <button type="button" class="icon-btn" data-rename-route="${r.id}" aria-label="Rename route">${icon('pencil')}</button>
         <button type="button" class="icon-btn" data-del-route="${r.id}" aria-label="Delete route">${icon('trash')}</button>
       </div>`;
@@ -1051,6 +1237,9 @@
     $('setLegalBefore').value = s.legalBefore;
     $('setLegalAfter').value = s.legalAfter;
     $('setRut').value = s.rutPeak || '';
+    $('rutHint').textContent = s.lat == null ? 'For your area'
+      : s.lat >= 36 ? 'Northern peak breeding is usually Nov 10–20'
+        : 'Southern rut varies by county (Oct–Jan). Use your state agency\'s breeding data';
     $('setUnits').value = s.units;
   }
 
@@ -1347,7 +1536,13 @@
       const h = e.target.closest('[data-hour]');
       if (h) { selectHour(Number(h.dataset.hour)); window.scrollTo({ top: 0, behavior: 'smooth' }); }
     });
-    $('scoreHelp').addEventListener('click', () => $('helpDialog').showModal());
+    $('scoreHelp').addEventListener('click', () => {
+      $('evidenceBody').innerHTML = Movement.EVIDENCE.map((e) => `<div class="ev-row"><strong>${e.factor}</strong><span class="ev-strength ev-${e.strength}">${e.strength === 'none' ? 'no effect' : e.strength}</span>
+        <span class="ev-w">${e.weight}</span><span class="ev-n">${e.note}</span></div>`).join('')
+        + `<div class="ev-sources"><strong>Research</strong>${Movement.SOURCES.map(([t, u]) => `<a href="${u}" target="_blank" rel="noopener">${t}</a>`).join('')}
+          <p>Weights are set by hand from these findings, not fitted to data. Logging your sits and sightings lets the app check them against your property over time.</p></div>`;
+      $('helpDialog').showModal();
+    });
     $('refreshBtn').addEventListener('click', () => fetchForecast(true));
 
     // Map
@@ -1440,6 +1635,7 @@
       $('layerGrid').querySelectorAll('.layer-opt').forEach((x) => x.classList.toggle('on', x === b));
     });
     $('labelsToggle').addEventListener('change', (e) => setLabels(e.target.checked));
+    $('hillshadeToggle').addEventListener('change', (e) => setHillshade(e.target.checked));
     $('streaksToggle').addEventListener('change', (e) => {
       store.settings.streaks = e.target.checked; save();
       renderMapLayers(); if (model) renderHero(model.days[selectedDay].info);

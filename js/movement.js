@@ -1,10 +1,17 @@
 /*
- * Deer movement model. Scores each forecast hour 0-100 from:
- *  - time relative to sunrise/sunset (deer are crepuscular)
- *  - solunar major/minor periods
- *  - pressure trend, temperature drop, wind, precipitation
- *  - moon phase and rut timing
- * Weights come from common field wisdom, not a fitted model.
+ * Deer movement model. Scores each forecast hour 0-100.
+ *
+ * Weights follow GPS-collar research rather than hunting folklore:
+ *  - Time relative to sunrise/sunset dominates every study (deer are crepuscular).
+ *  - Season / rut timing is the next biggest driver.
+ *  - Temperature change is the most consistent weather effect, but modest.
+ *  - Barometric pressure: mixed evidence, small weight.
+ *  - Wind: small and inconsistent effect on movement (it matters for scent, which
+ *    the stand and route ratings handle), so only extreme wind counts here.
+ *  - Moon phase: no effect in GPS studies, so it is not scored.
+ *  - Solunar: only moon overhead/underfoot showed any association, and only on
+ *    days away from new/full moon; small weight. Moonrise/moonset are not scored.
+ * See EVIDENCE below for sources.
  */
 (function (global) {
   'use strict';
@@ -45,80 +52,59 @@
       const h = hours[i];
       const day = getDay(h.time);
       if (!day) { out.push(null); continue; }
-      const factors = [];
       const t = h.time.getTime();
 
-      // 1. Daylight curve: peaks just after sunrise and just before sunset.
+      // 1. Daylight curve (the dominant factor): peaks just after sunrise and before sunset.
       const hSunrise = (t - (day.sunrise.getTime() + 0.4 * HOUR)) / HOUR;
       const hSunset = (t - (day.sunset.getTime() - 0.4 * HOUR)) / HOUR;
       const rut = rutPhase(day.date, opts.rutPeak);
-      let base = 18 + 45 * Math.max(gauss(hSunrise, 1.3), gauss(hSunset, 1.3));
+      let score = 15 + 55 * Math.max(gauss(hSunrise, 1.3), gauss(hSunset, 1.3));
       const midday = Math.abs((t - day.solarNoon.getTime()) / HOUR) < 2.5;
-      if (midday && rut.midday) base += 20 * rut.midday;
-      let score = base;
+      if (midday && rut.midday) score += 22 * rut.midday;
 
-      // 2. Solunar.
-      let sol = 0;
-      for (const p of day.solunar) {
-        const o = overlap(h.time, p);
-        sol = Math.max(sol, o * (p.kind === 'major' ? 14 : 8));
-      }
-      if (sol > 0) factors.push({ v: sol, text: 'Solunar period' });
-      score += sol;
+      // 2. Season / rut.
+      score += rut.boost;
 
-      // 3. Pressure trend over the previous 6 hours.
-      const prev6 = hours[i - 6];
-      if (prev6 && h.pressure != null && prev6.pressure != null) {
-        const dp = h.pressure - prev6.pressure; // hPa
-        let pv = 0;
-        if (dp > 1.5) pv = 7; // rising after a front
-        else if (dp < -3) pv = 5; // falling fast ahead of a storm
-        else if (dp < -1.5) pv = 2;
-        if (h.pressure > 1022) pv += 2;
-        if (h.pressure < 1005) pv -= 3;
-        score += pv;
-        h.pressureTrend = dp;
-      }
-
-      // 4. Temperature: compare to the same hour yesterday.
+      // 3. Temperature: change vs the same hour yesterday, and heat.
       const prev24 = hours[i - 24];
       if (prev24 && h.temp != null && prev24.temp != null) {
         const dt = h.temp - prev24.temp;
-        if (dt <= -10) score += 10;
+        if (dt <= -10) score += 9;
         else if (dt <= -5) score += 5;
-        else if (dt >= 10) score -= 6;
-        else if (dt >= 5) score -= 3;
+        else if (dt >= 10) score -= 5;
+        else if (dt >= 5) score -= 2;
       }
       if (h.temp != null) {
-        if (h.temp > 75) score -= 10;
-        else if (h.temp > 65) score -= 5;
-        else if (h.temp < 40) score += 3;
+        if (h.temp > 75) score -= 8;
+        else if (h.temp > 65) score -= 4;
       }
 
-      // 5. Wind.
-      if (h.wind != null) {
-        if (h.wind > 20) score -= 15;
-        else if (h.wind > 14) score -= 8;
-        else if (h.wind < 2) score -= 1;
-        else if (h.wind <= 10) score += 2;
+      // 4. Pressure trend over 6 hours (mixed evidence, small weight).
+      const prev6 = hours[i - 6];
+      if (prev6 && h.pressure != null && prev6.pressure != null) {
+        const dp = h.pressure - prev6.pressure; // hPa
+        if (dp > 1.5) score += 3; // rising behind a front
+        else if (dp < -3) score += 2; // falling fast ahead of weather
+        h.pressureTrend = dp;
       }
 
-      // 6. Precipitation: heavy rain shuts them down, movement after it clears.
+      // 5. Wind: only extreme wind.
+      if (h.wind != null && h.wind > 25) score -= 4;
+
+      // 6. Precipitation: heavy rain slows movement; movement after it clears.
       if (h.precip != null) {
-        if (h.precip > 0.15) score -= 12;
-        else if (h.precip > 0.04) score -= 4;
-        else if (h.precip > 0) score += 1; // drizzle/mist is fine
+        if (h.precip > 0.15) score -= 6;
         const before = hours.slice(Math.max(0, i - 4), i);
-        const wasRaining = before.some((b) => b.precip != null && b.precip > 0.05);
-        if (wasRaining && h.precip < 0.01) score += 8;
+        if (before.some((b) => b.precip != null && b.precip > 0.05) && h.precip < 0.01) score += 4;
       }
 
-      // 7. Moon phase: modest bump around new and full.
+      // 7. Solunar: moon overhead/underfoot only, small weight, mostly away from new/full moon.
       const mp = day.moon.phase;
-      const nearNewFull = Math.min(mp, Math.abs(mp - 0.5), 1 - mp) < 0.06;
-      if (nearNewFull) score += 3;
+      const fromNewFull = Math.min(mp, Math.abs(mp - 0.5), 1 - mp); // 0 at new/full, 0.25 at quarters
+      let sol = 0;
+      for (const p of day.solunar) if (p.kind === 'major') sol = Math.max(sol, overlap(h.time, p));
+      score += sol * (2 + 8 * fromNewFull); // 2 at new/full, up to 4 at quarter moons
 
-      score += rut.boost;
       out.push(clamp(Math.round(score), 0, 100));
     }
     return out;
@@ -154,22 +140,20 @@
       else if (dt >= 5) reasons.push({ good: false, text: `Morning ${Math.round(dt)}° warmer than yesterday` });
     }
     if (temps.length && Math.max(...temps) > 68) reasons.push({ good: false, text: 'Warm afternoon: deer will move late' });
+    if (precip > 0.3) reasons.push({ good: false, text: 'Steady rain expected' });
     if (winds.length) {
       const mw = Math.max(...winds);
-      if (mw > 18) reasons.push({ good: false, text: `Windy (up to ${Math.round(mw)} mph)` });
-      else if (mw <= 10) reasons.push({ good: true, text: 'Light winds' });
+      if (mw > 25) reasons.push({ good: false, text: `Very windy (up to ${Math.round(mw)} mph)` });
+      else if (mw > 15) reasons.push({ good: false, text: `Windy: tougher hunting, movement only slightly affected` });
     }
-    if (precip > 0.3) reasons.push({ good: false, text: 'Steady rain expected' });
     const pt = dayHours.map((h) => h.pressureTrend).filter((v) => v != null);
     if (pt.length) {
       const maxRise = Math.max(...pt), maxFall = Math.min(...pt);
       if (maxRise > 1.5) reasons.push({ good: true, text: 'Pressure rising (post-front)' });
       else if (maxFall < -3) reasons.push({ good: true, text: 'Pressure dropping ahead of weather' });
     }
-    const goodSol = day.solunar.filter((p) => nearLight(p.center, day));
-    if (goodSol.length) reasons.push({ good: true, text: `${goodSol[0].label} near ${isMorning(goodSol[0].center, day) ? 'dawn' : 'dusk'}` });
-    const mp = day.moon.phase;
-    if (Math.min(mp, Math.abs(mp - 0.5), 1 - mp) < 0.06) reasons.push({ good: true, text: day.moon.name });
+    const goodSol = day.solunar.filter((p) => p.kind === 'major' && nearLight(p.center, day));
+    if (goodSol.length) reasons.push({ good: true, text: `${goodSol[0].label} near ${isMorning(goodSol[0].center, day) ? 'dawn' : 'dusk'} (small effect)` });
     const rut = rutPhase(day.date, opts.rutPeak);
     if (rut.label) reasons.push({ good: true, text: rut.label });
 
@@ -209,5 +193,24 @@
     return 'Poor';
   }
 
-  global.Movement = { scoreHours, summarizeDay, label, rutPhase };
+  // What drives the score and how strong the research behind each factor is.
+  const EVIDENCE = [
+    { factor: 'Time of day (dawn & dusk)', weight: 'Up to +55', strength: 'strong', note: 'The dominant pattern in every GPS-collar study.' },
+    { factor: 'Rut timing', weight: '+4 to +12, plus midday movement at peak', strength: 'strong', note: 'Adult bucks increase movement into the breeding season, then drop off after.' },
+    { factor: 'Temperature change', weight: '+5 to +9 for a cold snap, −2 to −8 for warm/hot', strength: 'moderate', note: 'The most consistent weather effect, but smaller than time of day.' },
+    { factor: 'Barometric pressure', weight: '+2 to +3', strength: 'mixed', note: 'Some studies show more movement on rising or very high pressure; others show little.' },
+    { factor: 'Rain', weight: '−6 heavy, +4 after it clears', strength: 'limited', note: 'Little hard data; kept small.' },
+    { factor: 'Solunar (moon overhead/underfoot)', weight: '+2 to +4', strength: 'weak', note: 'One GPS study found a link only for overhead/underfoot, mostly away from new/full moon. Moonrise/moonset not scored.' },
+    { factor: 'Wind', weight: '−4 only above 25 mph', strength: 'weak', note: 'Studies disagree and effects are small; wind matters most for scent, handled by stand and route ratings.' },
+    { factor: 'Moon phase', weight: 'Not scored', strength: 'none', note: 'GPS studies found no effect of moon phase on movement.' },
+  ];
+  const SOURCES = [
+    ['Penn State: deer movement vs moon phase and weather', 'https://www.psu.edu/news/research/story/research-focus-how-deer-respond-changes-moon-phase-weather'],
+    ['Webb et al. 2010, Int. J. of Ecology: moon phase and deer movement', 'https://doaj.org/article/98c06121b2744793be79f44614fcd27f'],
+    ['Sullivan et al. 2016, SEAFWA: deer activity and solunar events', 'https://seafwa.org/journal/2016/movement-moon-white-tailed-deer-activity-and-solunar-events'],
+    ['Goethlich, Auburn Univ.: abiotic factors and deer activity', 'https://etd.auburn.edu/handle/10415/7077'],
+    ['NC State: adult male movement through the breeding season', 'https://repository.lib.ncsu.edu/items/61a4d1f2-63c5-4c35-8169-e3be4adcff7d/full'],
+  ];
+
+  global.Movement = { scoreHours, summarizeDay, label, rutPhase, EVIDENCE, SOURCES };
 })(window);

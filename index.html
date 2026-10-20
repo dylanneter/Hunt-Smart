@@ -126,6 +126,8 @@
           <button type="button" class="wind-open" data-goview="map" aria-label="Open map"><svg class="ic"><use href="#i-map"/></svg></button>
         </div>
 
+        <div class="hero-src" id="heroSrc"></div>
+
         <div class="scrubber">
           <button type="button" class="scrub-pill" id="hourPill">
             <span class="scrub-step" data-step="-1"><svg class="ic sm"><use href="#i-chev-l"/></svg></span>
@@ -204,6 +206,7 @@
             <button class="btn orange" id="drawDone">Finish route</button>
           </div>
         </div>
+        <div class="elev-chip hidden" id="elevChip"></div>
         <div class="place-bar hidden" id="placeBar">
           <button class="btn ghost" id="placeCancel">Cancel</button>
           <button class="btn orange" id="placeConfirm">Place here</button>
@@ -279,7 +282,7 @@
           <span class="row-text"><strong>Shooting light ends</strong><span>Minutes after sunset</span></span>
           <input id="setLegalAfter" type="number" min="0" max="60" inputmode="numeric"></label>
         <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-deer"/></svg></span>
-          <span class="row-text"><strong>Peak rut</strong><span>For your area</span></span>
+          <span class="row-text"><strong>Peak rut</strong><span id="rutHint">For your area</span></span>
           <input id="setRut" type="date"></label>
         <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-temp"/></svg></span>
           <span class="row-text"><strong>Units</strong><span>Temp &amp; wind</span></span>
@@ -321,7 +324,7 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 7 (Hunt Log)</p>
+      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 8 (Accuracy &amp; terrain)</p>
     </section>
   </main>
 
@@ -446,6 +449,7 @@
       </div>
       <div class="sheet-body">
         <div class="layer-grid" id="layerGrid"></div>
+        <label class="toggle-row"><span>Hillshade (terrain relief)</span><input type="checkbox" id="hillshadeToggle"></label>
         <label class="toggle-row"><span>Place labels</span><input type="checkbox" id="labelsToggle"></label>
         <label class="toggle-row"><span>Animated wind</span><input type="checkbox" id="streaksToggle" checked></label>
         <label class="toggle-row"><span>Suggested approach for stands without routes</span><input type="checkbox" id="suggestToggle" checked></label>
@@ -458,17 +462,10 @@
     <form method="dialog">
       <div class="grab"></div>
       <div class="sheet-head">
-        <div><h2>Movement outlook</h2><p class="sheet-sub">How the 0–100 score is built</p></div>
+        <div><h2>Movement outlook</h2><p class="sheet-sub">What drives the score, and how strong the research is</p></div>
         <button type="submit" class="icon-btn plain" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
-      <div class="sheet-body list">
-        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-sunrise"/></svg></span><span class="row-text"><strong>Dawn &amp; dusk</strong><span>Deer move most just after sunrise and before sunset</span></span></div>
-        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-moon"/></svg></span><span class="row-text"><strong>Solunar &amp; moon</strong><span>Major/minor periods, new and full moon</span></span></div>
-        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-gauge"/></svg></span><span class="row-text"><strong>Pressure &amp; fronts</strong><span>Rising pressure and cold snaps boost movement</span></span></div>
-        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-wind"/></svg></span><span class="row-text"><strong>Wind &amp; rain</strong><span>High wind and heavy rain slow deer down</span></span></div>
-        <div class="list-row static"><span class="tile"><svg class="ic"><use href="#i-deer"/></svg></span><span class="row-text"><strong>Rut timing</strong><span>Based on the peak rut date in Settings</span></span></div>
-        <p class="muted small">It's an estimate built from field rules of thumb, not a guarantee. Use it to compare hours and days.</p>
-      </div>
+      <div class="sheet-body list" id="evidenceBody"></div>
     </form>
   </dialog>
 
@@ -477,6 +474,7 @@
   <script src="js/astro.js"></script>
   <script src="js/movement.js"></script>
   <script src="js/routes.js"></script>
+  <script src="js/terrain.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

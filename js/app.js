@@ -15,6 +15,7 @@
   const defaults = {
     settings: { lat: null, lon: null, placeName: null, legalBefore: 30, legalAfter: 30, rutPeak: defaultRut(), units: 'imperial' },
     stands: [],
+    spots: [], // bedding / food / trail markers
   };
   let store = load();
   let forecast = null; // raw cached response
@@ -35,7 +36,7 @@
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [] };
+      if (s && s.settings) return { settings: { ...defaults.settings, ...s.settings }, stands: s.stands || [], spots: s.spots || [] };
     } catch (e) { /* ignore */ }
     return JSON.parse(JSON.stringify(defaults));
   }
@@ -351,6 +352,7 @@
 
     renderPressure(info);
     renderStandPicks(info);
+    renderEntryPlan(info);
     renderSolunar(info);
     renderThermals(info);
   }
@@ -412,21 +414,38 @@
   }
 
   let miniMap = null, miniLayers = null;
+  // Stands within a few km of the weather location; far-off strays shouldn't zoom the view out.
+  function nearbyStands() {
+    if (!hasLoc()) return store.stands;
+    const c = L.latLng(store.settings.lat, store.settings.lon);
+    return store.stands.filter((s) => c.distanceTo([s.lat, s.lon]) < 5000);
+  }
+
+  // Frame the hunting area: nearby stands if there are any, otherwise the weather location.
+  function frameArea(m, minZoom = 14) {
+    m.invalidateSize();
+    const center = hasLoc() ? [store.settings.lat, store.settings.lon] : null;
+    const near = nearbyStands();
+    const size = m.getSize();
+    if (!near.length || !size.x || !size.y) { if (center) m.setView(near.length ? [near[0].lat, near[0].lon] : center, 16); return; }
+    if (near.length === 1) { m.setView([near[0].lat, near[0].lon], 16); return; }
+    const b = L.latLngBounds(near.map((s) => [s.lat, s.lon])).pad(0.5);
+    m.setView(b.getCenter(), Math.max(minZoom, Math.min(17, m.getBoundsZoom(b))));
+  }
+
   function renderMiniMap(h) {
     if (!hasLoc()) return;
-    const center = [store.settings.lat, store.settings.lon];
     if (!miniMap) {
       miniMap = L.map('miniMap', { zoomControl: false, attributionControl: true, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false, boxZoom: false, keyboard: false, tap: false });
       miniMap.attributionControl.setPrefix(false);
       miniMap.attributionControl.setPosition('bottomleft');
       tileLayer('sat').addTo(miniMap);
-      miniLayers = { cones: L.layerGroup().addTo(miniMap), stands: L.layerGroup().addTo(miniMap) };
+      miniLayers = { routes: L.layerGroup().addTo(miniMap), cones: L.layerGroup().addTo(miniMap), stands: L.layerGroup().addTo(miniMap) };
+      // The card can be laid out after the map is created; reframe once it has a real size.
+      if (window.ResizeObserver) new ResizeObserver(() => frameArea(miniMap)).observe($('miniMap'));
     }
-    const bounds = store.stands.length ? L.latLngBounds(store.stands.map((s) => [s.lat, s.lon])) : null;
-    if (bounds && store.stands.length > 1) miniMap.fitBounds(bounds.pad(0.6), { maxZoom: 17 });
-    else miniMap.setView(bounds ? bounds.getCenter() : center, 16);
+    frameArea(miniMap);
     drawStands(miniLayers, h, false);
-    setTimeout(() => miniMap.invalidateSize(), 0);
   }
 
   function avg(a) { const b = a.filter((v) => v != null); return b.length ? b.reduce((s, v) => s + v, 0) / b.length : 0; }
@@ -517,6 +536,30 @@
       }).join('');
   }
 
+  function renderEntryPlan(info) {
+    const el = $('entryPlan');
+    if (!store.stands.length) { el.innerHTML = '<p class="empty">Add a stand, then draw your routes in. The app picks the best one for the wind.</p>'; return; }
+    if (!model.hours.length) { el.innerHTML = '<p class="empty">Waiting for wind forecast…</p>'; return; }
+    // Typical walk-in times: 30 min before shooting light, and 3 hours before sunset.
+    const amT = new Date(info.legalStart.getTime() - 30 * 60000);
+    const pmT = new Date(info.sunset.getTime() - 3 * HOUR);
+    const amW = windAt(amT), pmW = windAt(pmT);
+    const line = (label, t, w, e) => {
+      if (!w || !e) return `<span>${label}: no wind data</span>`;
+      const what = e.suggested ? `approach from the <b>${dirName(e.bearing)}</b>` : `take <b>${esc(e.route.name)}</b>`;
+      return `<span class="entry-sub">${label} ${fmtTime(t)} · ${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}: ${what} <span class="pill ${e.cls}">${e.label}</span></span>`;
+    };
+    el.innerHTML = store.stands.map((st) => {
+      const a = entryFor(st, amW), p = entryFor(st, pmW);
+      const cls = [a, p].filter(Boolean).sort((x, y) => y.score - x.score)[0]?.cls || 'r-unk';
+      const hint = !(st.routes || []).length ? '<span>No routes drawn yet. Showing the best side to come in from.</span>' : '';
+      return `<div class="list-row" data-edit="${st.id}">
+        <span class="tile ${cls}">${icon('walk')}</span>
+        <span class="row-text"><strong>${esc(st.name)}</strong>${line('AM walk-in', amT, amW, a)}${line('PM walk-in', pmT, pmW, p)}${hint}</span>
+      </div>`;
+    }).join('');
+  }
+
   function renderSolunar(info) {
     const periods = info.solunar;
     if (!periods.length) { $('solunar').innerHTML = '<p class="empty">No solunar periods today.</p>'; return; }
@@ -577,11 +620,12 @@
     const el = $('standList');
     if (!store.stands.length) { el.innerHTML = ''; return; }
     const cur = currentMapWind();
+    const near = new Set(nearbyStands());
     el.innerHTML = store.stands.map((s) => {
       const r = cur ? windRating(s, cur.dir, cur.wind) : null;
       return `<div class="list-row" data-edit="${s.id}">
         <span class="tile ${r ? r.cls : 'r-unk'}">${icon('ladder')}</span>
-        <span class="row-text"><strong>${esc(s.name)}</strong><span>${s.goodWinds.length ? `Good: ${s.goodWinds.join(', ')}` : 'No good winds set'}${s.type ? ` · ${esc(s.type)}` : ''}</span></span>
+        <span class="row-text"><strong>${esc(s.name)}</strong><span>${s.goodWinds.length ? `Good: ${s.goodWinds.join(', ')}` : 'No good winds set'}${s.type ? ` · ${esc(s.type)}` : ''}${(s.routes || []).length ? ` · ${s.routes.length} route${s.routes.length > 1 ? 's' : ''}` : ''}</span>${near.has(s) ? '' : '<span class="hot">Far from your weather location. Move or delete it?</span>'}</span>
         <span class="row-end">${r ? `<span class="pill ${r.cls}">${r.text}</span>` : ''}
           <button class="icon-btn" data-goto="${s.id}" aria-label="Show on map">${icon('map')}</button></span>
       </div>`;
@@ -596,7 +640,7 @@
   };
   const LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
   const tileLayer = (key) => L.tileLayer(TILES[key].url, TILES[key].opts);
-  let baseLayer = null, labelsLayer = null, placing = false;
+  let baseLayer = null, labelsLayer = null, placing = false, routeLayer = null, drawLayer = null, drawing = null;
 
   // Slider slot 0 is live conditions; the rest are upcoming forecast hours.
   function mapHours() {
@@ -628,9 +672,12 @@
     map.attributionControl.setPrefix(false);
     setBaseLayer(store.settings.mapBase || 'sat');
     setLabels(!!store.settings.mapLabels);
+    routeLayer = L.layerGroup().addTo(map);
     coneLayer = L.layerGroup().addTo(map);
     standLayer = L.layerGroup().addTo(map);
-    if (store.stands.length) map.fitBounds(L.latLngBounds(store.stands.map((s) => [s.lat, s.lon])).pad(0.5), { maxZoom: 17 });
+    drawLayer = L.layerGroup().addTo(map);
+    if (hasLoc()) frameArea(map, 13);
+    map.on('click', (e) => { if (drawing) addDrawPoint(e.latlng); });
     setupSlider();
     renderMapLayers();
   }
@@ -661,6 +708,7 @@
         <img alt="" loading="lazy" src="${t.url.replace('{z}', z).replace('{x}', x).replace('{y}', y)}"><span>${t.name}</span></button>`).join('');
     $('labelsToggle').checked = !!store.settings.mapLabels;
     $('streaksToggle').checked = store.settings.streaks !== false;
+    $('suggestToggle').checked = store.settings.suggest !== false;
     $('layersDialog').showModal();
   }
 
@@ -679,32 +727,72 @@
   }
 
   // Draw stand markers and downwind scent cones into a {stands, cones} pair of layer groups.
+  // Draw stands (with facing), scent cones, entry routes and deer sign into layer groups.
   function drawStands(layers, h, interactive) {
     layers.stands.clearLayers();
     layers.cones.clearLayers();
+    if (layers.routes) layers.routes.clearLayers();
+    const wind = h && h.wind != null ? { dir: h.dir, speed: h.wind } : null;
+    const RCOL = { 'r-good': '#6fcf5a', 'r-marg': '#e8c43d', 'r-bad': '#e5533d', 'r-unk': '#bbbbbb' };
+
     for (const s of store.stands) {
       const r = h ? windRating(s, h.dir, h.wind) : { cls: 'r-unk', text: '' };
-      if (h && h.wind != null) {
+      if (wind) {
         const len = Math.min(500, 120 + h.wind * 25);
         const half = h.wind < 4 ? 50 : h.wind < 8 ? 32 : 22;
         const down = h.dir + 180;
         const pts = [[s.lat, s.lon]];
         for (let a = -half; a <= half; a += half / 6) pts.push(destPoint(s.lat, s.lon, down + a, len));
-        const color = r.cls === 'r-good' ? '#6fcf5a' : r.cls === 'r-marg' ? '#e8c43d' : r.cls === 'r-bad' ? '#e5533d' : '#aaaaaa';
-        L.polygon(pts, { color, weight: 1.5, fillColor: color, fillOpacity: 0.22, interactive: false }).addTo(layers.cones);
+        L.polygon(pts, { color: RCOL[r.cls], weight: 1.5, fillColor: RCOL[r.cls], fillOpacity: 0.2, interactive: false }).addTo(layers.cones);
       }
+      if (s.facing != null) {
+        const pts = [[s.lat, s.lon]];
+        for (let a = -40; a <= 40; a += 10) pts.push(destPoint(s.lat, s.lon, s.facing + a, 45));
+        L.polygon(pts, { color: '#ffffff', weight: 1, opacity: 0.6, fillColor: '#ffffff', fillOpacity: 0.12, interactive: false }).addTo(layers.cones);
+      }
+
+      // Entry routes, colored by how well they keep your scent off deer for this wind.
+      if (layers.routes) {
+        const entry = entryFor(s, wind);
+        for (const rt of s.routes || []) {
+          const sc = wind ? Routes.scoreRoute(rt.points, s, store.spots, wind) : null;
+          const best = entry && entry.route === rt;
+          L.polyline(rt.points, { color: '#000', weight: best ? 9 : 7, opacity: 0.35, interactive: false }).addTo(layers.routes);
+          const line = L.polyline(rt.points, { color: RCOL[sc ? sc.cls : 'r-unk'], weight: best ? 5 : 4, opacity: best ? 1 : 0.75, dashArray: best ? null : '8 6', interactive }).addTo(layers.routes);
+          if (interactive) {
+            line.bindTooltip(`${best && (s.routes || []).length > 1 ? '★ ' : ''}${esc(rt.name)}`, { permanent: true, direction: 'center', className: 'route-label' });
+            line.bindPopup(`<strong>${esc(rt.name)}</strong> · ${esc(s.name)}<br>${sc ? `<span class="pill ${sc.cls}">${sc.label}</span> ${esc(sc.reason)}` : 'No wind data'}<br><button class="btn" data-edit="${s.id}">Edit stand</button>`);
+          }
+        }
+        if (entry && entry.suggested && store.settings.suggest !== false) {
+          const line = L.polyline(entry.points, { color: '#e8893d', weight: 4, dashArray: '2 9', lineCap: 'round', opacity: 0.95, interactive: false }).addTo(layers.routes);
+          if (interactive) line.bindTooltip(`Approach from ${dirName(entry.bearing)}`, { permanent: true, direction: 'center', className: 'route-label' });
+        }
+      }
+
       const icn = L.divIcon({
         className: 'stand-icon',
-        html: `<div class="stand-dot ${r.cls}"></div><div class="stand-label">${esc(s.name)}</div>`,
+        html: `<div class="stand-dot ${r.cls}">${s.facing != null ? `<span class="stand-face" style="transform:rotate(${s.facing}deg)"></span>` : ''}</div><div class="stand-label">${esc(s.name)}</div>`,
         iconSize: [24, 24], iconAnchor: [12, 12],
       });
       const mk = L.marker([s.lat, s.lon], { icon: icn, draggable: interactive, interactive }).addTo(layers.stands);
       if (interactive) {
-        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}</span><br><button class="btn" data-edit="${s.id}">Edit stand</button>`);
+        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}${s.facing != null ? ` · Faces ${DIRS8[Math.round(s.facing / 45) % 8]}` : ''}</span><br><button class="btn" data-edit="${s.id}">Edit stand</button> <button class="btn ghost" data-route-for="${s.id}">Draw route</button>`);
         mk.on('dragend', () => {
           const ll = mk.getLatLng();
-          s.lat = ll.lat; s.lon = ll.lng; save(); renderMapLayers();
+          s.lat = ll.lat; s.lon = ll.lng; save(); render();
         });
+      }
+    }
+
+    for (const sp of store.spots) {
+      const t = SPOT_TYPES[sp.type];
+      if (!t) continue;
+      const icn = L.divIcon({ className: 'spot-icon', html: `<div class="spot-pin ${sp.type}">${icon(t.icon)}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] });
+      const mk = L.marker([sp.lat, sp.lon], { icon: icn, draggable: interactive, interactive }).addTo(layers.stands);
+      if (interactive) {
+        mk.bindPopup(`<strong>${esc(sp.name)}</strong><br><span class="small">${t.label}</span><br><button class="btn ghost" data-rename-spot="${sp.id}">Rename</button> <button class="btn ghost danger-text" data-del-spot="${sp.id}">Delete</button>`);
+        mk.on('dragend', () => { const ll = mk.getLatLng(); sp.lat = ll.lat; sp.lon = ll.lng; save(); render(); });
       }
     }
   }
@@ -719,26 +807,165 @@
       : '';
     $('hourLabel').textContent = h ? (h.live ? 'Now' : `${h.time.toLocaleDateString([], { weekday: 'short' })} ${fmtHourShort(h.time)}`) : 'No forecast';
     setStreaks('mapStreaks', h ? h.dir : null, h ? h.wind : null);
-    drawStands({ stands: standLayer, cones: coneLayer }, h, true);
+    drawStands({ stands: standLayer, cones: coneLayer, routes: routeLayer }, h, true);
   }
 
-  function setPlacing(on) {
-    placing = on;
-    $('crosshair').classList.toggle('hidden', !on);
-    $('placeBar').classList.toggle('hidden', !on);
-    $('mapScrub').classList.toggle('hidden', on);
-    $('addStandBtn').classList.toggle('on', on);
+  function setPlacing(kind) {
+    placing = kind || false;
+    $('crosshair').classList.toggle('hidden', !placing);
+    $('placeBar').classList.toggle('hidden', !placing);
+    $('mapScrub').classList.toggle('hidden', !!placing);
+    $('addStandBtn').classList.toggle('on', !!placing);
+    if (placing) $('placeConfirm').textContent = placing === 'stand' ? 'Place stand here' : `Place ${SPOT_TYPES[placing].label.toLowerCase()} here`;
+  }
+
+  // ---------- Add to map ----------
+  const SPOT_TYPES = {
+    bedding: { label: 'Bedding area', icon: 'bed', sub: 'Where deer lay up during the day' },
+    food: { label: 'Food source', icon: 'leaf', sub: 'Food plot, field edge, oaks' },
+    trail: { label: 'Trail / funnel', icon: 'funnel', sub: 'Travel route, pinch point, crossing' },
+  };
+
+  function openAddSheet() {
+    const row = (attr, ic, title, sub, accent) => `<button type="button" class="list-row" ${attr}><span class="tile ${accent ? 'accent' : ''}">${icon(ic)}</span><span class="row-text"><strong>${title}</strong><span>${sub}</span></span></button>`;
+    $('addSheetSub').textContent = 'Select what to add';
+    $('addSheetBody').innerHTML = '<div class="sheet-section">Stand</div>'
+      + row('data-add="stand"', 'ladder', 'Tree stand', 'Drop a stand at the crosshair')
+      + '<div class="sheet-section">Routes</div>'
+      + row('data-add="route"', 'route', 'Route into a stand', 'Tap points from where you park to the stand. Draw a few and the app picks the best one for the wind.')
+      + '<div class="sheet-section">Deer sign</div>'
+      + Object.entries(SPOT_TYPES).map(([k, t]) => row(`data-add="${k}"`, t.icon, t.label, t.sub)).join('');
+    $('addSheet').showModal();
+  }
+
+  function chooseStandForRoute() {
+    if (!store.stands.length) { showToast('Add a stand first'); return; }
+    if (store.stands.length === 1) { $('addSheet').close(); startDrawing(store.stands[0].id); return; }
+    $('addSheetSub').textContent = 'Which stand is this route for?';
+    $('addSheetBody').innerHTML = store.stands.map((st) => `<button type="button" class="list-row" data-route-for="${st.id}"><span class="tile">${icon('ladder')}</span><span class="row-text"><strong>${esc(st.name)}</strong><span>${(st.routes || []).length} route(s) so far</span></span></button>`).join('');
+  }
+
+  // ---------- Route drawing ----------
+  function startDrawing(standId) {
+    const st = store.stands.find((x) => x.id === standId);
+    if (!st) return;
+    showView('map');
+    setTimeout(() => {
+      if (placing) setPlacing(false);
+      drawing = { standId, pts: [] };
+      if (map.getZoom() < 15) map.setView([st.lat, st.lon], 16);
+      $('drawHint').textContent = `Tap from where you park to ${st.name}`;
+      $('drawBar').classList.remove('hidden');
+      $('mapScrub').classList.add('hidden');
+      redrawDraft();
+    }, 60);
+  }
+
+  function addDrawPoint(ll) {
+    drawing.pts.push([ll.lat, ll.lng]);
+    redrawDraft();
+  }
+
+  function redrawDraft() {
+    drawLayer.clearLayers();
+    if (!drawing) return;
+    const st = store.stands.find((x) => x.id === drawing.standId);
+    const pts = drawing.pts;
+    if (pts.length) {
+      L.polyline([...pts, [st.lat, st.lon]], { color: '#fff', weight: 3, dashArray: '2 8', opacity: 0.8, interactive: false }).addTo(drawLayer);
+      L.polyline(pts, { color: '#e8893d', weight: 5, interactive: false }).addTo(drawLayer);
+      pts.forEach((p, i) => L.circleMarker(p, { radius: i ? 5 : 7, color: '#fff', weight: 2, fillColor: '#e8893d', fillOpacity: 1, interactive: false }).addTo(drawLayer));
+    }
+    $('drawDone').disabled = !pts.length;
+  }
+
+  function stopDrawing() {
+    drawing = null;
+    if (drawLayer) drawLayer.clearLayers();
+    $('drawBar').classList.add('hidden');
+    $('mapScrub').classList.remove('hidden');
+  }
+
+  function finishDrawing() {
+    if (!drawing || !drawing.pts.length) return;
+    const st = store.stands.find((x) => x.id === drawing.standId);
+    const pts = drawing.pts.slice();
+    if (L.latLng(pts[pts.length - 1]).distanceTo([st.lat, st.lon]) > 10) pts.push([st.lat, st.lon]);
+    st.routes = st.routes || [];
+    const name = `Route ${String.fromCharCode(65 + st.routes.length % 26)}`;
+    st.routes.push({ id: Date.now().toString(36), name, points: pts });
+    save();
+    stopDrawing();
+    render();
+    showToast(`${name} saved for ${st.name}`);
+  }
+
+  // Wind at (or nearest to) a moment in time.
+  function windAt(t) {
+    let best = null, bd = Infinity;
+    for (const h of model.hours) { const d = Math.abs(h.time - t); if (d < bd) { bd = d; best = h; } }
+    return best && bd <= HOUR ? { dir: best.dir, speed: best.wind } : null;
+  }
+
+  // Best entry for a stand at a given wind: the best drawn route, or a suggested approach side.
+  function entryFor(st, wind) {
+    if (!wind) return null;
+    const routes = (st.routes || []).map((r) => ({ r, sc: Routes.scoreRoute(r.points, st, store.spots, wind) })).filter((x) => x.sc);
+    if (routes.length) {
+      routes.sort((a, b) => b.sc.score - a.sc.score);
+      return { route: routes[0].r, ...routes[0].sc, all: routes };
+    }
+    const sug = Routes.suggestApproach(st, store.spots, wind);
+    return sug ? { suggested: true, ...sug } : null;
   }
 
   // ---------- Stand dialog ----------
   function buildWindPick() {
-    // 3x3 compass grid.
+    // 3x3 compass grids: good winds (multi-select) and facing (single-select).
     const layout = ['NW', 'N', 'NE', 'W', '', 'E', 'SW', 'S', 'SE'];
-    $('windPick').innerHTML = layout.map((d) => (d ? `<button type="button" data-dir="${d}">${d}</button>` : `<span class="cp-center">${icon('deer')}</span>`)).join('');
+    const grid = (center) => layout.map((d) => (d ? `<button type="button" data-dir="${d}">${d}</button>` : `<span class="cp-center">${icon(center)}</span>`)).join('');
+    $('windPick').innerHTML = grid('deer');
+    $('facingPick').innerHTML = grid('eye');
     $('windPick').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-dir]');
       if (b) b.classList.toggle('on');
     });
+    $('facingPick').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-dir]');
+      if (!b) return;
+      const was = b.classList.contains('on');
+      $('facingPick').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      if (!was) b.classList.add('on');
+    });
+    // Deer come from where you face, so winds blowing from that side (and quartering) carry scent behind you.
+    $('suggestWinds').addEventListener('click', () => {
+      const f = $('facingPick').querySelector('button.on');
+      if (!f) { showToast('Pick which way the stand faces first'); return; }
+      const i = DIRS8.indexOf(f.dataset.dir);
+      const good = [DIRS8[(i + 7) % 8], DIRS8[i], DIRS8[(i + 1) % 8]];
+      $('windPick').querySelectorAll('button[data-dir]').forEach((b) => b.classList.toggle('on', good.includes(b.dataset.dir)));
+    });
+  }
+
+  function renderRouteList(stand) {
+    const el = $('routeList');
+    const routes = stand ? stand.routes || [] : [];
+    const h = model ? currentMapWind() : null;
+    el.innerHTML = routes.map((r) => {
+      const sc = h ? Routes.scoreRoute(r.points, stand, store.spots, { dir: h.dir, speed: h.wind }) : null;
+      return `<div class="list-row static">
+        <span class="tile ${sc ? sc.cls : 'r-unk'}">${icon('route')}</span>
+        <span class="row-text"><strong>${esc(r.name)}</strong><span>${sc ? `${sc.label} ${h.live ? 'now' : 'at ' + fmtHourShort(h.time)} · ${sc.reason}` : `${Math.round(routeLength(r.points))} m`}</span></span>
+        <button type="button" class="icon-btn" data-rename-route="${r.id}" aria-label="Rename route">${icon('pencil')}</button>
+        <button type="button" class="icon-btn" data-del-route="${r.id}" aria-label="Delete route">${icon('trash')}</button>
+      </div>`;
+    }).join('');
+  }
+
+  function routeLength(pts) {
+    let d = 0;
+    for (let i = 1; i < pts.length; i++) d += L.latLng(pts[i - 1]).distanceTo(L.latLng(pts[i]));
+    return d;
   }
 
   function openStandDialog(id) {
@@ -750,6 +977,10 @@
     $('standNotes').value = s ? s.notes || '' : '';
     const good = s ? s.goodWinds : [];
     $('windPick').querySelectorAll('button[data-dir]').forEach((b) => b.classList.toggle('on', good.includes(b.dataset.dir)));
+    const facing = s && s.facing != null ? DIRS8[Math.round(s.facing / 45) % 8] : null;
+    $('facingPick').querySelectorAll('button[data-dir]').forEach((b) => b.classList.toggle('on', b.dataset.dir === facing));
+    $('routeBlock').classList.toggle('hidden', !s);
+    renderRouteList(s);
     $('standDelete').classList.toggle('hidden', !s);
     $('standDialog').showModal();
   }
@@ -757,11 +988,13 @@
   function saveStand() {
     const goodWinds = [...$('windPick').querySelectorAll('button.on')].map((b) => b.dataset.dir);
     goodWinds.sort((a, b) => DIRS8.indexOf(a) - DIRS8.indexOf(b));
-    const data = { name: $('standName').value.trim() || 'Stand', type: $('standType').value, notes: $('standNotes').value.trim(), goodWinds };
+    const f = $('facingPick').querySelector('button.on');
+    const facing = f ? DIRS8.indexOf(f.dataset.dir) * 45 : null;
+    const data = { name: $('standName').value.trim() || 'Stand', type: $('standType').value, notes: $('standNotes').value.trim(), goodWinds, facing };
     if (editingId) {
       Object.assign(store.stands.find((x) => x.id === editingId), data);
     } else if (pendingLatLng) {
-      store.stands.push({ id: Date.now().toString(36), lat: pendingLatLng.lat, lon: pendingLatLng.lng, ...data });
+      store.stands.push({ id: Date.now().toString(36), lat: pendingLatLng.lat, lon: pendingLatLng.lng, routes: [], ...data });
       if (!hasLoc()) setLocation(pendingLatLng.lat, pendingLatLng.lng, null, { keepMap: true });
     }
     pendingLatLng = null;
@@ -775,7 +1008,7 @@
     document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     document.body.classList.toggle('map-mode', name === 'map');
     if (name === 'map') setTimeout(initMap, 0);
-    else if (placing) setPlacing(false);
+    else { if (placing) setPlacing(false); if (drawing) stopDrawing(); }
     if (name === 'today' && miniMap) setTimeout(() => miniMap.invalidateSize(), 0);
     window.scrollTo(0, 0);
   }
@@ -908,14 +1141,40 @@
 
     // Map
     $('hourSlider').addEventListener('input', (e) => { mapHour = Number(e.target.value); renderMapLayers(); renderStandList(); });
-    $('addStandBtn').addEventListener('click', () => setPlacing(!placing));
+    $('addStandBtn').addEventListener('click', () => { if (placing) setPlacing(false); else if (!drawing) openAddSheet(); });
+    $('addSheetBody').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-add]');
+      if (!b) return;
+      const kind = b.dataset.add;
+      if (kind === 'route') { chooseStandForRoute(); return; }
+      $('addSheet').close();
+      setPlacing(kind);
+    });
     $('placeCancel').addEventListener('click', () => setPlacing(false));
     $('placeConfirm').addEventListener('click', () => {
-      pendingLatLng = map.getCenter();
+      // A stand dropped while zoomed out lands miles from where it belongs.
+      if (map.getZoom() < 14) { showToast('Zoom in closer to place it accurately'); return; }
+      const ll = map.getCenter();
+      const kind = placing;
       setPlacing(false);
-      openStandDialog(null);
+      if (kind === 'stand') { pendingLatLng = ll; openStandDialog(null); return; }
+      const t = SPOT_TYPES[kind];
+      const n = store.spots.filter((x) => x.type === kind).length + 1;
+      store.spots.push({ id: Date.now().toString(36), type: kind, name: `${t.label} ${n}`, lat: ll.lat, lon: ll.lng });
+      save(); render();
+      showToast(`${t.label} added`);
     });
-    $('newStandRow').addEventListener('click', () => { showView('map'); setTimeout(() => setPlacing(true), 50); });
+    $('newStandRow').addEventListener('click', () => { showView('map'); setTimeout(() => setPlacing('stand'), 50); });
+    $('drawCancel').addEventListener('click', stopDrawing);
+    $('drawUndo').addEventListener('click', () => { if (drawing) { drawing.pts.pop(); redrawDraft(); } });
+    $('drawDone').addEventListener('click', finishDrawing);
+    $('drawRouteBtn').addEventListener('click', () => {
+      const id = editingId;
+      saveStand();
+      $('standDialog').close();
+      startDrawing(id);
+    });
+    $('suggestToggle').addEventListener('change', (e) => { store.settings.suggest = e.target.checked; save(); renderMapLayers(); });
     $('layersBtn').addEventListener('click', openLayers);
     $('layerGrid').addEventListener('click', (e) => {
       const b = e.target.closest('[data-layer]');
@@ -946,6 +1205,28 @@
         const s = store.stands.find((x) => x.id === go.dataset.goto);
         showView('map');
         setTimeout(() => map && s && map.setView([s.lat, s.lon], 17), 50);
+        return;
+      }
+      const rf = e.target.closest('[data-route-for]');
+      if (rf) { if (map) map.closePopup(); if ($('addSheet').open) $('addSheet').close(); startDrawing(rf.dataset.routeFor); return; }
+      const dr = e.target.closest('[data-del-route], [data-rename-route]');
+      if (dr) {
+        const st = store.stands.find((x) => x.id === editingId);
+        const rt = st && (st.routes || []).find((x) => x.id === (dr.dataset.delRoute || dr.dataset.renameRoute));
+        if (!rt) return;
+        if (dr.dataset.delRoute) { if (!confirm(`Delete ${rt.name}?`)) return; st.routes = st.routes.filter((x) => x !== rt); }
+        else { const n = prompt('Route name', rt.name); if (!n || !n.trim()) return; rt.name = n.trim().slice(0, 30); }
+        save(); renderRouteList(st); render();
+        return;
+      }
+      const sp = e.target.closest('[data-del-spot], [data-rename-spot]');
+      if (sp) {
+        const spot = store.spots.find((x) => x.id === (sp.dataset.delSpot || sp.dataset.renameSpot));
+        if (!spot) return;
+        if (sp.dataset.delSpot) { if (!confirm(`Delete ${spot.name}?`)) return; store.spots = store.spots.filter((x) => x !== spot); }
+        else { const n = prompt('Name', spot.name); if (!n || !n.trim()) return; spot.name = n.trim().slice(0, 40); }
+        if (map) map.closePopup();
+        save(); render();
         return;
       }
       const ed = e.target.closest('[data-edit]');
@@ -1017,9 +1298,16 @@
           id: String(s.id || Date.now().toString(36)), name: String(s.name || 'Stand').slice(0, 40), lat: s.lat, lon: s.lon,
           goodWinds: Array.isArray(s.goodWinds) ? s.goodWinds.filter((d) => DIRS8.includes(d)) : [],
           type: String(s.type || ''), notes: String(s.notes || '').slice(0, 300),
+          facing: typeof s.facing === 'number' ? ((Math.round(s.facing / 45) % 8) + 8) % 8 * 45 : null,
+          routes: Array.isArray(s.routes) ? s.routes.filter((r) => Array.isArray(r.points) && r.points.length > 1 && r.points.every((p) => Array.isArray(p) && typeof p[0] === 'number' && typeof p[1] === 'number'))
+            .map((r) => ({ id: String(r.id || Math.random().toString(36).slice(2)), name: String(r.name || 'Route').slice(0, 30), points: r.points.map((p) => [p[0], p[1]]) })) : [],
         }));
         const added = incoming.filter((s) => !ids.has(s.id));
         store.stands.push(...added);
+        const spotIds = new Set(store.spots.map((x) => x.id));
+        const spots = (Array.isArray(data.spots) ? data.spots : []).filter((x) => SPOT_TYPES[x.type] && typeof x.lat === 'number' && typeof x.lon === 'number' && !spotIds.has(String(x.id)))
+          .map((x) => ({ id: String(x.id || Math.random().toString(36).slice(2)), type: x.type, name: String(x.name || SPOT_TYPES[x.type].label).slice(0, 40), lat: x.lat, lon: x.lon }));
+        store.spots.push(...spots);
         if (!hasLoc() && data.settings && typeof data.settings.lat === 'number' && typeof data.settings.lon === 'number') { store.settings.lat = data.settings.lat; store.settings.lon = data.settings.lon; lookupPlaceName(store.settings.lat, store.settings.lon); }
         save(); fillSettings(); buildModel(); render(); fetchForecast();
         showToast(`Imported ${added.length} stand(s)`);

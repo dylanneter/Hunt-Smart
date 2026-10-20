@@ -1,8 +1,8 @@
 /* Offline support: app shell is cached, weather is network-first, map tiles are cached as you view them. */
-const VERSION = 'hs-v4';
+const VERSION = 'hs-v5';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'js/app.js', 'js/astro.js', 'js/movement.js',
+  'js/app.js', 'js/astro.js', 'js/movement.js', 'js/routes.js',
   'vendor/suncalc.js', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'vendor/leaflet/images/layers.png', 'vendor/leaflet/images/layers-2x.png',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',

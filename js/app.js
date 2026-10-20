@@ -26,7 +26,7 @@
 
   // ---------- State ----------
   const defaults = {
-    settings: { lat: null, lon: null, legalBefore: 30, legalAfter: 30, rutPeak: defaultRut(), units: 'imperial' },
+    settings: { lat: null, lon: null, placeName: null, legalBefore: 30, legalAfter: 30, rutPeak: defaultRut(), units: 'imperial' },
     stands: [],
   };
   let store = load();
@@ -246,6 +246,7 @@
     renderToday();
     renderWeek();
     renderStandList();
+    renderLocation();
     if (map) renderMapLayers();
     renderLiveStatus();
   }
@@ -669,7 +670,7 @@
       Object.assign(store.stands.find((x) => x.id === editingId), data);
     } else if (pendingLatLng) {
       store.stands.push({ id: Date.now().toString(36), lat: pendingLatLng.lat, lon: pendingLatLng.lng, ...data });
-      if (!hasLoc()) { store.settings.lat = pendingLatLng.lat; store.settings.lon = pendingLatLng.lng; fetchForecast(true); }
+      if (!hasLoc()) setLocation(pendingLatLng.lat, pendingLatLng.lng, null, { keepMap: true });
     }
     pendingLatLng = null;
     save();
@@ -700,12 +701,84 @@
     if (!navigator.geolocation) { showBanner('Location is not available on this device.', 'warn'); return; }
     showBanner('Getting your location…');
     navigator.geolocation.getCurrentPosition((pos) => {
-      store.settings.lat = pos.coords.latitude;
-      store.settings.lon = pos.coords.longitude;
-      save(); fillSettings(); showBanner(null);
-      if (map) map.setView([store.settings.lat, store.settings.lon], 16);
-      buildModel(); render(); fetchForecast(true);
-    }, (err) => showBanner(`Couldn't get location: ${err.message}. Enter it under Stands → Settings.`, 'warn'), { enableHighAccuracy: true, timeout: 15000 });
+      showBanner(null);
+      setLocation(pos.coords.latitude, pos.coords.longitude, null);
+    }, (err) => showBanner(`Couldn't get location: ${err.message}. Tap the location at the top of Today to search instead.`, 'warn'), { enableHighAccuracy: true, timeout: 15000 });
+  }
+
+  // ---------- Location ----------
+  // Place search and names come from OpenStreetMap Nominatim (free; max 1 request/sec, no autocomplete).
+  const GEO = 'https://nominatim.openstreetmap.org';
+
+  function setLocation(lat, lon, name, opts = {}) {
+    const s = store.settings;
+    s.lat = lat; s.lon = lon; s.placeName = name || null;
+    save(); fillSettings();
+    if (map && !opts.keepMap) map.setView([lat, lon], 16);
+    buildModel(); render(); fetchForecast(true);
+    if (!name) lookupPlaceName(lat, lon);
+  }
+
+  function placeLabel(addr) {
+    if (!addr) return null;
+    const town = addr.city || addr.town || addr.village || addr.hamlet || addr.municipality || addr.township || addr.county;
+    const iso = addr['ISO3166-2-lvl4'];
+    const region = iso && /^US-/.test(iso) ? iso.slice(3) : addr.state || addr.country;
+    return [town, region].filter(Boolean).join(', ') || null;
+  }
+
+  async function lookupPlaceName(lat, lon) {
+    try {
+      const res = await fetch(`${GEO}/reverse?format=jsonv2&zoom=14&addressdetails=1&lat=${lat}&lon=${lon}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const name = placeLabel(data.address);
+      // Ignore the answer if the location changed while we waited.
+      if (name && store.settings.lat === lat && store.settings.lon === lon) {
+        store.settings.placeName = name;
+        save(); renderLocation();
+      }
+    } catch (e) { /* offline: coordinates are shown instead */ }
+  }
+
+  function renderLocation() {
+    const s = store.settings;
+    const name = s.placeName || (hasLoc() ? 'Your location' : 'No location set');
+    const coords = hasLoc() ? `${s.lat.toFixed(3)}, ${s.lon.toFixed(3)}` : 'Tap to set';
+    document.querySelectorAll('.loc-name').forEach((el) => { el.textContent = name; });
+    document.querySelectorAll('.loc-coords').forEach((el) => { el.textContent = coords; });
+  }
+
+  function openLocationDialog() {
+    $('locQuery').value = '';
+    $('locResults').innerHTML = '';
+    $('locDialog').showModal();
+    setTimeout(() => $('locQuery').focus(), 50);
+  }
+
+  let locResults = [];
+  async function searchLocation(q) {
+    q = q.trim();
+    if (!q) return;
+    // Accept pasted coordinates like "41.6, -88.1".
+    const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (m && Math.abs(+m[1]) <= 90 && Math.abs(+m[2]) <= 180) {
+      $('locDialog').close();
+      setLocation(+m[1], +m[2], null);
+      return;
+    }
+    const out = $('locResults');
+    out.innerHTML = '<p class="muted small">Searching…</p>';
+    try {
+      const res = await fetch(`${GEO}/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error(`search returned ${res.status}`);
+      locResults = await res.json();
+      out.innerHTML = locResults.length
+        ? locResults.map((r, i) => `<button type="button" class="loc-result" data-i="${i}"><strong>${esc(placeLabel(r.address) || r.name || r.display_name)}</strong><span class="muted small">${esc(r.display_name)}</span></button>`).join('')
+        : '<p class="muted small">No places found. Try a town and state, an address, or a ZIP code.</p>';
+    } catch (err) {
+      out.innerHTML = `<p class="muted small">Search failed (${esc(err.message)}). Check your connection.</p>`;
+    }
   }
 
   // ---------- Events ----------
@@ -765,8 +838,8 @@
       e.preventDefault();
       const lat = parseFloat($('setLat').value), lon = parseFloat($('setLon').value);
       const s = store.settings;
-      const locChanged = lat !== s.lat || lon !== s.lon;
-      if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) { s.lat = lat; s.lon = lon; }
+      const validLoc = !isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+      const locChanged = validLoc && (!hasLoc() || Math.abs(lat - s.lat) > 1e-5 || Math.abs(lon - s.lon) > 1e-5);
       s.legalBefore = Number($('setLegalBefore').value) || 0;
       s.legalAfter = Number($('setLegalAfter').value) || 0;
       s.rutPeak = $('setRut').value || null;
@@ -774,9 +847,22 @@
       save();
       showBanner('Settings saved.');
       setTimeout(() => showBanner(null), 1500);
-      buildModel(); render();
-      if (locChanged) fetchForecast(true);
+      if (locChanged) setLocation(lat, lon, null);
+      else { buildModel(); render(); }
     });
+
+    document.addEventListener('click', (e) => { if (e.target.closest('.loc-bar')) openLocationDialog(); });
+    $('locForm').addEventListener('submit', (e) => { e.preventDefault(); searchLocation($('locQuery').value); });
+    $('locResults').addEventListener('click', (e) => {
+      const b = e.target.closest('.loc-result');
+      if (!b) return;
+      const r = locResults[Number(b.dataset.i)];
+      $('locDialog').close();
+      setLocation(parseFloat(r.lat), parseFloat(r.lon), placeLabel(r.address) || r.name || null);
+    });
+    $('locGps').addEventListener('click', () => { $('locDialog').close(); useGps(); });
+    $('locCancel').addEventListener('click', () => $('locDialog').close());
+    $('searchLocBtn').addEventListener('click', openLocationDialog);
 
     $('exportBtn').addEventListener('click', () => {
       const blob = new Blob([JSON.stringify({ app: 'hunt-smart', version: 1, ...store }, null, 2)], { type: 'application/json' });
@@ -800,7 +886,7 @@
         }));
         const added = incoming.filter((s) => !ids.has(s.id));
         store.stands.push(...added);
-        if (!hasLoc() && data.settings && typeof data.settings.lat === 'number') { store.settings.lat = data.settings.lat; store.settings.lon = data.settings.lon; }
+        if (!hasLoc() && data.settings && typeof data.settings.lat === 'number' && typeof data.settings.lon === 'number') { store.settings.lat = data.settings.lat; store.settings.lon = data.settings.lon; lookupPlaceName(store.settings.lat, store.settings.lon); }
         save(); fillSettings(); buildModel(); render(); fetchForecast();
         showBanner(`Imported ${added.length} stand(s).`);
         setTimeout(() => showBanner(null), 2000);
@@ -838,12 +924,14 @@
     buildWindPick();
     bind();
     fillSettings();
+    renderLocation();
+    if (hasLoc() && !store.settings.placeName) lookupPlaceName(store.settings.lat, store.settings.lon);
     if (hasLoc()) {
       buildModel(); render(); fetchForecast();
     } else {
       $('scoreLabel').textContent = 'Set your property location to begin';
       $('scoreReasons').innerHTML = '<li><button class="btn small-btn" id="quickLocate">Use my location</button></li>'
-        + '<li class="muted">Or add a stand on the Map tab.</li>';
+        + '<li class="muted">Or tap the location bar above to search.</li>';
       $('quickLocate').onclick = useGps;
       useGps();
     }

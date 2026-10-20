@@ -34,6 +34,11 @@
   <main>
     <!-- TODAY -->
     <section id="view-today" class="view active">
+      <button type="button" class="loc-bar" aria-label="Change weather location">
+        <span class="loc-pin">&#x1F4CD;</span>
+        <span class="loc-text"><span class="muted small">Weather for</span><strong class="loc-name">—</strong><span class="loc-coords muted small"></span></span>
+        <span class="loc-change">Change</span>
+      </button>
       <div class="day-picker" id="dayPicker"></div>
 
       <div class="card score-card">
@@ -115,6 +120,11 @@
 
     <!-- WEEK -->
     <section id="view-week" class="view">
+      <button type="button" class="loc-bar" aria-label="Change weather location">
+        <span class="loc-pin">&#x1F4CD;</span>
+        <span class="loc-text"><span class="muted small">Weather for</span><strong class="loc-name">—</strong><span class="loc-coords muted small"></span></span>
+        <span class="loc-change">Change</span>
+      </button>
       <div class="card">
         <h2>7-day outlook</h2>
         <div id="weekList"></div>
@@ -137,7 +147,10 @@
               <input id="setLat" type="number" step="any" placeholder="Latitude">
               <input id="setLon" type="number" step="any" placeholder="Longitude">
             </div>
-            <button type="button" id="useGps" class="btn ghost small-btn">Use my current location</button>
+            <div class="row">
+              <button type="button" id="searchLocBtn" class="btn ghost small-btn">Search for a location</button>
+              <button type="button" id="useGps" class="btn ghost small-btn">Use my current location</button>
+            </div>
           </label>
           <label>Legal light before sunrise (min)
             <input id="setLegalBefore" type="number" min="0" max="60">
@@ -206,6 +219,23 @@
         <button type="button" id="standCancel" class="btn ghost">Cancel</button>
         <button type="submit" value="save" class="btn">Save</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="locDialog">
+    <form id="locForm">
+      <h2>Weather location</h2>
+      <div class="row">
+        <input id="locQuery" type="search" placeholder="Town, address, ZIP, or lat, lon" autocomplete="off" enterkeyhint="search">
+        <button type="submit" class="btn">Search</button>
+      </div>
+      <div id="locResults" class="loc-results"></div>
+      <div class="dialog-actions">
+        <button type="button" id="locGps" class="btn ghost">&#x2316; Use my current location</button>
+        <span class="spacer"></span>
+        <button type="button" id="locCancel" class="btn ghost">Cancel</button>
+      </div>
+      <p class="muted small">Place search © OpenStreetMap contributors.</p>
     </form>
   </dialog>
 

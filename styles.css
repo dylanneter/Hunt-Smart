@@ -248,3 +248,22 @@ legend { font-size: 0.85rem; color: var(--muted); padding: 0 4px; }
   background: var(--orange); color: #1c1005; font-weight: 600; padding: 10px 14px; border-radius: 12px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
+
+/* Location bar & search */
+.loc-bar {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 14px;
+  padding: 10px 12px; margin-bottom: 10px; font: inherit; cursor: pointer;
+}
+.loc-pin { font-size: 1.2rem; }
+.loc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.loc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; }
+.loc-change { color: var(--accent); font-weight: 600; font-size: 0.85rem; }
+#locForm { display: flex; flex-direction: column; gap: 12px; }
+#locForm .row input { flex: 1; }
+.loc-results { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.loc-result {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit;
+  background: var(--card2); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer;
+}
+.loc-result:active { border-color: var(--accent); }

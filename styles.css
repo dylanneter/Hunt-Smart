@@ -542,3 +542,10 @@ button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
 .pick-entry b { color: var(--fg); font-weight: 600; }
 .pick-entry .pill { padding: 1px 7px; font-size: 0.7rem; }
 .empty-hint { padding: 18px 16px; color: var(--muted); text-align: center; }
+
+.sheet-section.flush { padding: 8px 0 0; }
+.reco-row .row-text strong { font-size: 1.05rem; }
+.reco-row .row-text b { color: var(--fg); }
+.reco-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 2px; font-weight: 700; }
+.reco-head .ic { color: var(--orange); }
+.stand-label.best { background: var(--orange); color: var(--orange-ink); }

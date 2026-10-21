@@ -140,7 +140,7 @@
             <span id="hourPillText">--</span>
             <span class="scrub-step" data-step="1"><svg class="ic sm"><use href="#i-chev-r"/></svg></span>
           </button>
-          <input id="todayHour" type="range" min="0" max="23" value="7" aria-label="Hour of day">
+          <input id="todayHour" type="range" min="0" max="167" value="7" aria-label="Forecast hour">
         </div>
       </div>
 
@@ -155,6 +155,7 @@
         <ul id="scoreReasons" class="reasons"></ul>
         <div id="bestWindows" class="windows"></div>
       </div>
+      <div class="card flush stack" id="recoCard"></div>
       <div class="card flush stack" id="standPicks"></div>
 
       <h3 class="section">Conditions</h3>
@@ -298,7 +299,7 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 11 (Cleaner layout)</p>
+      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 12 (Recommendations)</p>
     </section>
   </main>
 
@@ -528,16 +529,21 @@
     <form method="dialog">
       <div class="grab"></div>
       <div class="sheet-head">
-        <div><h2>Map layers</h2><p class="sheet-sub">Choose a base map</p></div>
+        <div><h2>Map layers</h2><p class="sheet-sub">Base map and what to show on it</p></div>
         <button type="submit" class="icon-btn plain" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
       <div class="sheet-body">
         <div class="layer-grid" id="layerGrid"></div>
+        <div class="sheet-section flush">Your layers</div>
+        <label class="toggle-row"><span>Stands &amp; scent cones</span><input type="checkbox" data-setting="showCones"></label>
+        <label class="toggle-row"><span>Routes in</span><input type="checkbox" data-setting="showRoutes"></label>
+        <label class="toggle-row"><span>Suggested approach (stands without routes)</span><input type="checkbox" id="suggestToggle"></label>
+        <label class="toggle-row"><span>Deer sign (bedding, food, trails)</span><input type="checkbox" data-setting="showSpots"></label>
+        <label class="toggle-row"><span>Sightings (last 60 days)</span><input type="checkbox" id="sightingsToggle"></label>
+        <div class="sheet-section flush">Map extras</div>
         <label class="toggle-row"><span>Hillshade (terrain relief)</span><input type="checkbox" id="hillshadeToggle"></label>
         <label class="toggle-row"><span>Place labels</span><input type="checkbox" id="labelsToggle"></label>
-        <label class="toggle-row"><span>Animated wind</span><input type="checkbox" id="streaksToggle" checked></label>
-        <label class="toggle-row"><span>Suggested approach for stands without routes</span><input type="checkbox" id="suggestToggle" checked></label>
-        <label class="toggle-row"><span>Sightings (last 60 days)</span><input type="checkbox" id="sightingsToggle" checked></label>
+        <label class="toggle-row"><span>Animated wind</span><input type="checkbox" id="streaksToggle"></label>
       </div>
     </form>
   </dialog>

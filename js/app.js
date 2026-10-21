@@ -1946,6 +1946,12 @@
 
     // Map
     $('hourSlider').addEventListener('input', (e) => { mapHour = Number(e.target.value); renderMapLayers(); renderStandList(); });
+    $('mapHourPill').addEventListener('click', (e) => {
+      const st = e.target.closest('[data-mapstep]');
+      if (!st) return;
+      mapHour = Math.max(0, Math.min(Number($('hourSlider').max), mapHour + Number(st.dataset.mapstep)));
+      renderMapLayers(); renderStandList();
+    });
     $('addStandBtn').addEventListener('click', () => { if (placing) setPlacing(false); else if (!drawing) openAddSheet(); });
     $('addSheetBody').addEventListener('click', (e) => {
       const b = e.target.closest('[data-add]');

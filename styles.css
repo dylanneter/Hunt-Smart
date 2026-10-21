@@ -555,3 +555,7 @@ button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
 .day-picker.in-hero button { background: var(--card2); min-width: 56px; padding: 7px 10px; }
 .day-picker.in-hero button.active { border-color: var(--orange); background: var(--card2); }
 .day-picker.in-hero button.active span:first-child { color: var(--orange); }
+
+.map-pill { font-size: 0.9rem; padding: 8px 4px; min-width: 128px; }
+.map-pill .scrub-step { padding: 4px 6px; }
+#hourLabel { white-space: nowrap; }

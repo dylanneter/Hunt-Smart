@@ -215,7 +215,11 @@
           <button class="btn orange" id="placeConfirm">Place here</button>
         </div>
         <div class="map-scrub" id="mapScrub">
-          <span class="scrub-pill small-pill" id="hourLabel">Now</span>
+          <button type="button" class="scrub-pill map-pill" id="mapHourPill">
+            <span class="scrub-step" data-mapstep="-1" aria-label="Previous hour"><svg class="ic sm"><use href="#i-chev-l"/></svg></span>
+            <span id="hourLabel">Now</span>
+            <span class="scrub-step" data-mapstep="1" aria-label="Next hour"><svg class="ic sm"><use href="#i-chev-r"/></svg></span>
+          </button>
           <input id="hourSlider" type="range" min="0" max="167" value="0" aria-label="Forecast hour">
         </div>
       </div>
@@ -299,7 +303,7 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 14 (Fairer picks)</p>
+      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 15 (Map hour steps)</p>
     </section>
   </main>
 

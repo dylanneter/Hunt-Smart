@@ -505,8 +505,8 @@
 
     const at = new Date(info.date); at.setHours(selectedHour);
     $('heroWhen').textContent = `${fmtDay(info.date, selectedDay)} ${info.date.getMonth() + 1}/${info.date.getDate()} @ ${live ? 'now' : fmtHourShort(at)}`;
-    $('hourPillText').textContent = live ? 'Now' : selectedDay === 0 ? fmtHourShort(at) : `${at.toLocaleDateString([], { weekday: 'short' })} ${fmtHourShort(at)}`;
-    $('todayHour').value = heroAbs();
+    $('hourPillText').textContent = live ? 'Now' : fmtHourShort(at);
+    $('todayHour').value = selectedHour;
 
     $('heroWxIcon').innerHTML = `<use href="#i-${h ? wxIconName(h.code, at) : 'sun'}"/>`;
     $('heroTemp').textContent = h ? fmtTemp(h.temp) : '--';
@@ -1886,15 +1886,11 @@
   }
 
   // ---------- Events ----------
-  // The Forecast scrubber runs continuously through all 7 days (0 = today midnight).
-  function selectHour(abs) {
-    const v = Math.max(0, Math.min(7 * 24 - 1, abs));
-    const day = Math.floor(v / 24);
-    selectedHour = v % 24;
-    if (day !== selectedDay) { selectedDay = day; renderDayPicker(); }
+  // The Forecast scrubber covers the selected day; the day chips pick the day.
+  function selectHour(h) {
+    selectedHour = Math.max(0, Math.min(23, h));
     renderToday();
   }
-  const heroAbs = () => selectedDay * 24 + selectedHour;
 
   function bind() {
     document.querySelector('.tabbar').addEventListener('click', (e) => {
@@ -1912,11 +1908,11 @@
     $('todayHour').addEventListener('input', (e) => selectHour(Number(e.target.value)));
     $('hourPill').addEventListener('click', (e) => {
       const st = e.target.closest('[data-step]');
-      if (st) selectHour(heroAbs() + Number(st.dataset.step));
+      if (st) selectHour(selectedHour + Number(st.dataset.step));
     });
     $('hourly').addEventListener('click', (e) => {
       const h = e.target.closest('[data-hour]');
-      if (h) { selectHour(selectedDay * 24 + Number(h.dataset.hour)); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      if (h) { selectHour(Number(h.dataset.hour)); window.scrollTo({ top: 0, behavior: 'smooth' }); }
     });
     $('scoreHelp').addEventListener('click', () => {
       $('evidenceBody').innerHTML = Movement.EVIDENCE.map((e) => `<div class="ev-row"><strong>${e.factor}</strong><span class="ev-strength ev-${e.strength}">${e.strength === 'none' ? 'no effect' : e.strength}</span>

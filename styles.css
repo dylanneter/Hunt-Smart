@@ -549,3 +549,9 @@ button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
 .reco-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 2px; font-weight: 700; }
 .reco-head .ic { color: var(--orange); }
 .stand-label.best { background: var(--orange); color: var(--orange-ink); }
+
+/* Day chips inside the Forecast card */
+.day-picker.in-hero { margin: 14px -16px 0; padding: 2px 16px 4px; gap: 6px; }
+.day-picker.in-hero button { background: var(--card2); min-width: 56px; padding: 7px 10px; }
+.day-picker.in-hero button.active { border-color: var(--orange); background: var(--card2); }
+.day-picker.in-hero button.active span:first-child { color: var(--orange); }

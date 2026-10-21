@@ -97,7 +97,6 @@
           <svg class="ic sm"><use href="#i-nav"/></svg>
           <span class="loc-name">—</span>
         </button>
-        <div class="loc-coords muted small"></div>
 
         <div class="hero-score">
           <svg class="ic deer"><use href="#i-deer"/></svg>
@@ -130,9 +129,10 @@
           </button>
           <button type="button" class="wind-open" data-goview="map" aria-label="Open map"><svg class="ic"><use href="#i-map"/></svg></button>
         </div>
-
-        <div class="hero-src" id="heroSrc"></div>
-        <button type="button" class="wind-check-btn" data-windcheck><svg class="ic sm"><use href="#i-wind"/></svg> <span id="windCheckLabel">Wind look wrong? Do a wind check</span></button>
+        <div class="wind-meta">
+          <span id="heroSrc"></span>
+          <button type="button" class="wind-check-btn" data-windcheck><svg class="ic sm"><use href="#i-wind"/></svg><span id="windCheckLabel">Check wind</span></button>
+        </div>
 
         <div class="scrubber">
           <button type="button" class="scrub-pill" id="hourPill">
@@ -146,7 +146,7 @@
 
       <div class="day-picker" id="dayPicker"></div>
 
-      <h3 class="section">Day outlook</h3>
+      <h3 class="section">Today's plan</h3>
       <div class="card">
         <div class="outlook-head">
           <div><div id="scoreLabel" class="title">Loading…</div><div id="scoreSub" class="muted small"></div></div>
@@ -155,18 +155,18 @@
         <ul id="scoreReasons" class="reasons"></ul>
         <div id="bestWindows" class="windows"></div>
       </div>
+      <div class="card flush stack" id="standPicks"></div>
 
-      <h3 class="section">Which stand to sit</h3>
-      <div class="card flush" id="standPicks"></div>
-
-      <h3 class="section">Getting to your stand</h3>
-      <div class="card flush" id="entryPlan"></div>
-
-      <h3 class="section">Hour by hour</h3>
-      <div class="card flush"><div id="hourly" class="hourly"></div></div>
-
-      <h3 class="section">Sun &amp; moon</h3>
-      <div class="card">
+      <h3 class="section">Conditions</h3>
+      <div class="seg" id="detailTabs">
+        <button data-tab="hourly" class="on">Hourly</button>
+        <button data-tab="sun">Sun &amp; Moon</button>
+        <button data-tab="feeding">Feeding</button>
+        <button data-tab="pressure">Pressure</button>
+        <button data-tab="scent">Scent</button>
+      </div>
+      <div class="card flush detail-panel" data-panel="hourly"><div id="hourly" class="hourly"></div></div>
+      <div class="card detail-panel hidden" data-panel="sun">
         <div class="moon-row">
           <canvas id="moonCanvas" width="112" height="112" aria-hidden="true"></canvas>
           <div>
@@ -176,19 +176,15 @@
         </div>
         <div class="tile-grid" id="sunMoonGrid"></div>
       </div>
-
-      <h3 class="section">Feeding times (solunar)</h3>
-      <div class="card flush" id="solunar"></div>
-      <p class="footnote">Major periods (~2 hrs) center on the moon overhead and underfoot. Minor periods (~1 hr) center on moonrise and moonset. They're strongest when they line up with dawn or dusk.</p>
-
-      <h3 class="section">Pressure</h3>
-      <div class="card">
+      <div class="card flush detail-panel hidden" data-panel="feeding">
+        <div id="solunar"></div>
+        <p class="footnote pad">Solunar periods are shown for reference. Research finds only a small effect, so they barely move the score.</p>
+      </div>
+      <div class="card detail-panel hidden" data-panel="pressure">
         <canvas id="pressureChart" class="chart" height="140"></canvas>
         <p id="pressureNote" class="muted small"></p>
       </div>
-
-      <h3 class="section">Scent &amp; thermals</h3>
-      <div class="card flush" id="thermals"></div>
+      <div class="card flush detail-panel hidden" data-panel="scent"><div id="thermals"></div></div>
     </section>
 
     <!-- MAP -->
@@ -227,31 +223,33 @@
     <!-- LOG -->
     <section id="view-log" class="view">
       <h1 class="page-title">Hunt Log</h1>
-      <p class="page-sub">Every sighting saves the wind, weather and moon so patterns show up over time.</p>
       <div class="log-actions">
         <button class="btn orange wide" id="startSitBtn"><svg class="ic"><use href="#i-play"/></svg> Start a sit</button>
         <button class="btn ghost wide" id="logSightingBtn"><svg class="ic"><use href="#i-binoculars"/></svg> Log a sighting</button>
       </div>
 
-      <h3 class="section">Target bucks</h3>
-      <div class="card flush">
-        <div id="deerList"></div>
-        <button class="list-row" id="addDeerRow">
-          <span class="tile accent"><svg class="ic"><use href="#i-plus"/></svg></span>
-          <span class="row-text"><strong>Add a target buck</strong><span>Give him a name to track his sightings</span></span>
-        </button>
+      <div class="seg" id="logTabs">
+        <button data-tab="sits" class="on">Sits</button>
+        <button data-tab="sightings">Sightings</button>
+        <button data-tab="bucks">Bucks</button>
+        <button data-tab="insights">Insights</button>
       </div>
-
-      <div id="patternBlock"></div>
-
-      <div id="scorecard"></div>
-
-      <h3 class="section">Sits</h3>
-      <div class="card flush" id="sitList"></div>
-
-      <h3 class="section">Sightings</h3>
-      <div class="filter-row" id="logFilter"></div>
-      <div class="card flush" id="sightingList"></div>
+      <div class="log-panel" data-panel="sits"><div class="card flush" id="sitList"></div></div>
+      <div class="log-panel hidden" data-panel="sightings">
+        <div class="filter-row" id="logFilter"></div>
+        <div class="card flush" id="sightingList"></div>
+      </div>
+      <div class="log-panel hidden" data-panel="bucks">
+        <div class="card flush">
+          <div id="deerList"></div>
+          <button class="list-row" id="addDeerRow">
+            <span class="tile accent"><svg class="ic"><use href="#i-plus"/></svg></span>
+            <span class="row-text"><strong>Add a target buck</strong><span>Give him a name to track his sightings</span></span>
+          </button>
+        </div>
+        <div id="patternBlock"></div>
+      </div>
+      <div class="log-panel hidden" data-panel="insights"><div id="scorecard"></div></div>
     </section>
 
     <!-- WEEK -->
@@ -264,7 +262,7 @@
     <!-- STANDS / SETTINGS -->
     <section id="view-setup" class="view">
       <h1 class="page-title">Stands</h1>
-      <p class="page-sub">Tap a stand to edit its good winds.</p>
+      <p class="page-sub">Tap a stand to edit its winds, facing and routes.</p>
       <div class="card flush">
         <div id="standList"></div>
         <button class="list-row" id="newStandRow">
@@ -274,71 +272,33 @@
         </button>
       </div>
 
-      <h3 class="section">Location</h3>
+      <h3 class="section">Deer sign</h3>
+      <div class="card flush" id="spotList"></div>
+
+      <h3 class="section">App</h3>
       <div class="card flush">
         <button class="list-row loc-open">
           <span class="tile"><svg class="ic"><use href="#i-pin"/></svg></span>
           <span class="row-text"><strong class="loc-name">—</strong><span class="loc-coords"></span></span>
           <svg class="ic chev"><use href="#i-chev-r"/></svg>
         </button>
-        <button class="list-row" id="useGps">
-          <span class="tile"><svg class="ic"><use href="#i-locate"/></svg></span>
-          <span class="row-text"><strong>Use my current location</strong><span>Set the weather location from GPS</span></span>
+        <button class="list-row" id="openSettings">
+          <span class="tile"><svg class="ic"><use href="#i-settings"/></svg></span>
+          <span class="row-text"><strong>Hunting settings</strong><span>Shooting light, rut date, units</span></span>
+          <svg class="ic chev"><use href="#i-chev-r"/></svg>
         </button>
-      </div>
-
-      <h3 class="section">Hunting settings</h3>
-      <form id="settingsForm" class="card flush">
-        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-sunrise"/></svg></span>
-          <span class="row-text"><strong>Shooting light starts</strong><span>Minutes before sunrise</span></span>
-          <input id="setLegalBefore" type="number" min="0" max="60" inputmode="numeric"></label>
-        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-sunset"/></svg></span>
-          <span class="row-text"><strong>Shooting light ends</strong><span>Minutes after sunset</span></span>
-          <input id="setLegalAfter" type="number" min="0" max="60" inputmode="numeric"></label>
-        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-deer"/></svg></span>
-          <span class="row-text"><strong>Peak rut</strong><span id="rutHint">For your area</span></span>
-          <input id="setRut" type="date"></label>
-        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-temp"/></svg></span>
-          <span class="row-text"><strong>Units</strong><span>Temp &amp; wind</span></span>
-          <select id="setUnits"><option value="imperial">°F · mph</option><option value="metric">°C · km/h</option></select></label>
-        <details class="list-row adv">
-          <summary><span class="tile"><svg class="ic"><use href="#i-settings"/></svg></span>
-            <span class="row-text"><strong>Coordinates</strong><span>Enter latitude and longitude by hand</span></span></summary>
-          <div class="row"><input id="setLat" type="number" step="any" placeholder="Latitude"><input id="setLon" type="number" step="any" placeholder="Longitude"></div>
-        </details>
-        <div class="form-foot"><button type="submit" class="btn">Save settings</button></div>
-      </form>
-
-      <h3 class="section">Backup &amp; share</h3>
-      <div class="card flush">
-        <button class="list-row" id="exportBtn">
+        <button class="list-row" id="openBackup">
           <span class="tile"><svg class="ic"><use href="#i-download"/></svg></span>
-          <span class="row-text"><strong>Export stands</strong><span>Stands, routes, deer sign and your hunt log, to back up or send to a partner</span></span>
+          <span class="row-text"><strong>Backup &amp; share</strong><span>Export or import stands, routes and your log</span></span>
+          <svg class="ic chev"><use href="#i-chev-r"/></svg>
         </button>
-        <label class="list-row">
-          <span class="tile"><svg class="ic"><use href="#i-upload"/></svg></span>
-          <span class="row-text"><strong>Import stands</strong><span>Load stands from a backup file</span></span>
-          <input id="importFile" type="file" accept="application/json" hidden>
-        </label>
-      </div>
-
-      <h3 class="section">Add to home screen</h3>
-      <div class="card flush">
-        <div class="list-row static">
-          <span class="tile"><svg class="ic"><use href="#i-phone"/></svg></span>
-          <span class="row-text"><strong>iPhone (Safari)</strong><span>Share button → Add to Home Screen</span></span>
-        </div>
-        <div class="list-row static">
-          <span class="tile"><svg class="ic"><use href="#i-phone"/></svg></span>
-          <span class="row-text"><strong>Android (Chrome)</strong><span>⋮ menu → Install app</span></span>
-        </div>
         <button id="installBtn" class="list-row hidden">
-          <span class="tile accent"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="tile accent"><svg class="ic"><use href="#i-phone"/></svg></span>
           <span class="row-text"><strong>Install app</strong><span>Add Hunt Smart to this device</span></span>
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only.<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · Imagery: Esri · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 10 (Wind check)</p>
+      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 11 (Cleaner layout)</p>
     </section>
   </main>
 
@@ -420,6 +380,56 @@
     </form>
   </dialog>
 
+  <dialog id="settingsSheet" class="sheet">
+    <div class="grab"></div>
+    <div class="sheet-head">
+      <div><h2>Hunting settings</h2><p class="sheet-sub">Shooting light, rut timing and units</p></div>
+      <button type="button" class="icon-btn plain" data-close="settingsSheet" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="sheet-body list">
+      <form id="settingsForm">
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-sunrise"/></svg></span>
+          <span class="row-text"><strong>Shooting light starts</strong><span>Minutes before sunrise</span></span>
+          <input id="setLegalBefore" type="number" min="0" max="60" inputmode="numeric"></label>
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-sunset"/></svg></span>
+          <span class="row-text"><strong>Shooting light ends</strong><span>Minutes after sunset</span></span>
+          <input id="setLegalAfter" type="number" min="0" max="60" inputmode="numeric"></label>
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-deer"/></svg></span>
+          <span class="row-text"><strong>Peak rut</strong><span id="rutHint">For your area</span></span>
+          <input id="setRut" type="date"></label>
+        <label class="list-row field"><span class="tile"><svg class="ic"><use href="#i-temp"/></svg></span>
+          <span class="row-text"><strong>Units</strong><span>Temp &amp; wind</span></span>
+          <select id="setUnits"><option value="imperial">°F · mph</option><option value="metric">°C · km/h</option></select></label>
+        <details class="list-row adv">
+          <summary><span class="tile"><svg class="ic"><use href="#i-settings"/></svg></span>
+            <span class="row-text"><strong>Coordinates</strong><span>Enter latitude and longitude by hand</span></span></summary>
+          <div class="row"><input id="setLat" type="number" step="any" placeholder="Latitude"><input id="setLon" type="number" step="any" placeholder="Longitude"></div>
+        </details>
+        
+      </form>
+    </div>
+    <div class="sheet-foot"><span class="spacer"></span><button type="submit" form="settingsForm" class="btn">Save settings</button></div>
+  </dialog>
+
+  <dialog id="backupSheet" class="sheet">
+    <div class="grab"></div>
+    <div class="sheet-head">
+      <div><h2>Backup &amp; share</h2><p class="sheet-sub">Move your data to a new phone or a hunting partner</p></div>
+      <button type="button" class="icon-btn plain" data-close="backupSheet" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="sheet-body list">
+      <button class="list-row" id="exportBtn">
+        <span class="tile"><svg class="ic"><use href="#i-download"/></svg></span>
+        <span class="row-text"><strong>Export</strong><span>Stands, routes, deer sign, sits and sightings in one file</span></span>
+      </button>
+      <label class="list-row">
+        <span class="tile"><svg class="ic"><use href="#i-upload"/></svg></span>
+        <span class="row-text"><strong>Import</strong><span>Load a backup file. Adds anything you don't already have.</span></span>
+        <input id="importFile" type="file" accept="application/json" hidden>
+      </label>
+    </div>
+  </dialog>
+
   <dialog id="windDialog" class="sheet">
     <form method="dialog" id="windForm">
       <div class="grab"></div>
@@ -461,7 +471,7 @@
             </div>
             <div class="muted small" id="sitFromSightings"></div>
           </div>
-          <div class="field-block"><span>Busted?</span><div class="chips" id="sitBusted"></div></div>
+          <div class="field-block"><span>What happened <em class="muted">(tap all that apply)</em></span><div class="chips" id="sitTags"></div></div>
           <label class="field-block"><span>Notes</span><textarea id="sitNotes" rows="2" maxlength="300"></textarea></label>
         </div>
         <div class="snap" id="sitSnap"></div>

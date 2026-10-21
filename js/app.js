@@ -488,7 +488,6 @@
 
     renderPressure(info);
     renderStandPicks(info);
-    renderEntryPlan(info);
     renderSolunar(info);
     renderThermals(info);
   }
@@ -520,7 +519,7 @@
     $('heroWindDir').textContent = w ? dirName(w.dir) : '--';
     $('heroGust').textContent = w && w.gust != null ? Math.round(metric() ? w.gust * 1.609 : w.gust) : '--';
     const chk = activeWindCheck();
-    $('windCheckLabel').textContent = chk ? `Using your wind check (${dirName(chk.dir)}) · tap to update` : 'Wind look wrong? Do a wind check';
+    $('windCheckLabel').textContent = chk ? `Your check: ${dirName(chk.dir)}` : 'Check wind';
     document.querySelector('.wind-check-btn').classList.toggle('active', !!chk);
     document.querySelector('#heroDial .dial-needle').style.transform = `rotate(${w ? w.dir + 180 : 0}deg)`;
     setStreaks('miniStreaks', w ? w.dir : null, w ? w.wind : null);
@@ -668,7 +667,11 @@
     }));
     const r = (x) => rank[x?.cls] ?? 4;
     rows.sort((r1, r2) => (live ? r(r1.n) - r(r2.n) : 0) || r(r1.a) + r(r1.p) - r(r2.a) - r(r2.p));
-    const cell = (x) => `<div>${x ? `<span class="pill ${x.cls}">${x.text.replace(' wind', '')}</span>` : '—'}</div>`;
+    // How to get in: walk-ins 30 min before shooting light and 3 hours before sunset.
+    const amIn = new Date(info.legalStart.getTime() - 30 * 60000), pmIn = new Date(info.sunset.getTime() - 3 * HOUR);
+    const amW = windAt(amIn), pmW = windAt(pmIn);
+    const way = (e) => (!e ? '—' : e.suggested ? `from the <b>${dirName(e.bearing)}</b>` : `<b>${esc(e.route.name)}</b>`);
+    const cell = (x) => `<div>${x ? `<span class="pill ${x.cls}">${x.cls === 'r-unk' ? 'No winds' : x.text.replace(/ wind\b/, '')}</span>` : '—'}</div>`;
     const head = (k, w) => `<div>${k}${w ? `<small>${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}</small>` : ''}</div>`;
     const cols = live ? 3 : 2;
     el.innerHTML = `<div class="pick-head" style="--cols:${cols}"><div style="text-align:left">Stand</div>${live ? head('Now', { dir: live.dir, speed: live.wind }) : ''}${head('Morning', am)}${head('Evening', pm)}</div>`
@@ -677,32 +680,9 @@
         return `<div class="pick-row" style="--cols:${cols}" data-edit="${s.id}">
           <div class="pick-name"><span class="tile ${best ? best.cls : 'r-unk'}">${icon('ladder')}</span>
             <div><strong>${esc(s.name)}</strong><span>${s.goodWinds.length ? s.goodWinds.join(', ') : 'no winds set'}</span></div></div>
-          ${live ? cell(n) : ''}${cell(a)}${cell(p)}</div>`;
+          ${live ? cell(n) : ''}${cell(a)}${cell(p)}
+          <div class="pick-entry"><span>AM walk-in: ${way(entryFor(s, amW, amIn))}</span><span>PM walk-in: ${way(entryFor(s, pmW, pmIn))}</span></div></div>`;
       }).join('');
-  }
-
-  function renderEntryPlan(info) {
-    const el = $('entryPlan');
-    if (!store.stands.length) { el.innerHTML = '<p class="empty">Add a stand, then draw your routes in. The app picks the best one for the wind.</p>'; return; }
-    if (!model.hours.length) { el.innerHTML = '<p class="empty">Waiting for wind forecast…</p>'; return; }
-    // Typical walk-in times: 30 min before shooting light, and 3 hours before sunset.
-    const amT = new Date(info.legalStart.getTime() - 30 * 60000);
-    const pmT = new Date(info.sunset.getTime() - 3 * HOUR);
-    const amW = windAt(amT), pmW = windAt(pmT);
-    const line = (label, t, w, e) => {
-      if (!w || !e) return `<span>${label}: no wind data</span>`;
-      const what = e.suggested ? `approach from the <b>${dirName(e.bearing)}</b>` : `take <b>${esc(e.route.name)}</b>`;
-      return `<span class="entry-sub">${label} ${fmtTime(t)} · ${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}: ${what} <span class="pill ${e.cls}">${e.label}</span></span>`;
-    };
-    el.innerHTML = store.stands.map((st) => {
-      const a = entryFor(st, amW, amT), p = entryFor(st, pmW, pmT);
-      const cls = [a, p].filter(Boolean).sort((x, y) => y.score - x.score)[0]?.cls || 'r-unk';
-      const hint = !(st.routes || []).length ? '<span>No routes drawn yet. Showing the best side to come in from.</span>' : '';
-      return `<div class="list-row" data-edit="${st.id}">
-        <span class="tile ${cls}">${icon('walk')}</span>
-        <span class="row-text"><strong>${esc(st.name)}</strong>${line('AM walk-in', amT, amW, a)}${line('PM walk-in', pmT, pmW, p)}${hint}</span>
-      </div>`;
-    }).join('');
   }
 
   function renderSolunar(info) {
@@ -769,7 +749,21 @@
   }
 
   // ---------- Stands list ----------
+  function renderSpotList() {
+    const el = $('spotList');
+    if (!store.spots.length) { el.innerHTML = '<p class="empty">Mark bedding, food and trails from the map\'s + button. Route ratings use them.</p>'; return; }
+    el.innerHTML = store.spots.map((sp) => {
+      const t = SPOT_TYPES[sp.type] || { label: sp.type, icon: 'pin' };
+      return `<div class="list-row static"><span class="tile">${icon(t.icon)}</span>
+        <span class="row-text"><strong>${esc(sp.name)}</strong><span>${t.label}</span></span>
+        <button class="icon-btn" data-spot-map="${sp.id}" aria-label="Show on map">${icon('map')}</button>
+        <button class="icon-btn" data-rename-spot="${sp.id}" aria-label="Rename">${icon('pencil')}</button>
+        <button class="icon-btn" data-del-spot="${sp.id}" aria-label="Delete">${icon('trash')}</button></div>`;
+    }).join('');
+  }
+
   function renderStandList() {
+    renderSpotList();
     const el = $('standList');
     if (!store.stands.length) { el.innerHTML = ''; return; }
     const cur = currentMapWind();
@@ -959,7 +953,7 @@
       if (layers.routes) {
         const entry = entryFor(s, wind, t);
         for (const rt of s.routes || []) {
-          const sc = wind ? Routes.scoreRoute(rt.points, s, store.spots, wind) : null;
+          const sc = wind ? scoreRouteWithHistory(rt, s, driftAt(s, wind, t)) : null;
           const best = entry && entry.route === rt;
           L.polyline(rt.points, { color: '#000', weight: best ? 9 : 7, opacity: 0.35, interactive: false }).addTo(layers.routes);
           const line = L.polyline(rt.points, { color: RCOL[sc ? sc.cls : 'r-unk'], weight: best ? 5 : 4, opacity: best ? 1 : 0.75, dashArray: best ? null : '8 6', interactive }).addTo(layers.routes);
@@ -1147,10 +1141,28 @@
   }
 
   // Best entry for a stand at a given wind: the best drawn route, or a suggested approach side.
+  // How often deer got bumped walking in on a route, from the sit log.
+  function routeHistory(routeId) {
+    const sits = store.sits.filter((x) => x.routeId === routeId && x.end);
+    const bumped = sits.filter((x) => (x.tags || []).includes('bumped-in')).length;
+    return { n: sits.length, bumped };
+  }
+
+  // Wind-based route score, docked for routes where you've actually bumped deer.
+  function scoreRouteWithHistory(r, st, wind) {
+    const sc = Routes.scoreRoute(r.points, st, store.spots, wind);
+    if (!sc) return null;
+    const hist = routeHistory(r.id);
+    if (!hist.bumped) return sc;
+    const score = Math.max(0, Math.round(sc.score - 30 * (hist.bumped / hist.n)));
+    return { ...sc, score, cls: score >= 75 ? 'r-good' : score >= 50 ? 'r-marg' : 'r-bad', label: score >= 75 ? 'Good' : score >= 50 ? 'Caution' : 'Bad',
+      reason: `${sc.reason} · bumped deer ${hist.bumped} of ${hist.n} time${hist.n > 1 ? 's' : ''} on this route` };
+  }
+
   function entryFor(st, wind, t) {
     if (!wind) return null;
     if (t) { const d = driftAt(st, wind, t); wind = { dir: d.dir, speed: d.speed }; }
-    const routes = (st.routes || []).map((r) => ({ r, sc: Routes.scoreRoute(r.points, st, store.spots, wind) })).filter((x) => x.sc);
+    const routes = (st.routes || []).map((r) => ({ r, sc: scoreRouteWithHistory(r, st, wind) })).filter((x) => x.sc);
     if (routes.length) {
       routes.sort((a, b) => b.sc.score - a.sc.score);
       return { route: routes[0].r, ...routes[0].sc, all: routes };
@@ -1202,7 +1214,7 @@
     el.innerHTML = routes.map((r) => {
       const t = h ? (h.live ? new Date() : h.time) : null;
       const d = h ? driftAt(stand, { dir: h.dir, speed: h.wind }, t) : null;
-      const sc = d ? Routes.scoreRoute(r.points, stand, store.spots, { dir: d.dir, speed: d.speed }) : null;
+      const sc = d ? scoreRouteWithHistory(r, stand, { dir: d.dir, speed: d.speed }) : null;
       const cl = window.Terrain ? Terrain.climb(r.points) : null;
       return `<div class="list-row static">
         <span class="tile ${sc ? sc.cls : 'r-unk'}">${icon('route')}</span>
@@ -1364,7 +1376,7 @@
 
   // ---------- Hunt log ----------
   const KINDS = { buck: 'Buck', doe: 'Doe', fawn: 'Fawn', group: 'Group' };
-  const ACTIVITIES = { feeding: 'Feeding', traveling: 'Traveling', chasing: 'Chasing', bedded: 'Bedded', standing: 'Standing' };
+  const ACTIVITIES = { feeding: 'Feeding', traveling: 'Traveling', chasing: 'Chasing', bedded: 'Bedded', standing: 'Standing', spooked: 'Spooked' };
   let editingSightingId = null, pendingSighting = null, logFilter = 'all';
 
   const toLocalInput = (d) => {
@@ -1554,6 +1566,13 @@
   // Every sit is recorded, including the ones with no deer, so the movement score can be
   // checked against what actually happened on this property.
   const BUSTED = { no: 'No', winded: 'Winded me', saw: 'Saw / heard me' };
+  // Structured "what happened" tags: unlike free-text notes, the app can count these.
+  const SIT_TAGS = {
+    'bumped-in': 'Bumped deer walking in', winded: 'Winded me in the stand', seen: 'Saw / heard me',
+    'bumped-out': 'Bumped deer walking out', swirl: 'Wind swirled', disturbance: 'People / vehicles / dogs',
+    'out-of-range': 'Deer out of range', shot: 'Had a shot',
+  };
+  const sitTags = (sit) => sit.tags || (sit.busted === 'winded' ? ['winded'] : sit.busted === 'saw' ? ['seen'] : []);
   let sitMode = 'start', sitEditId = null, sitStandId = null, sightingContext = null, sitTimer = null;
 
   const activeSit = () => store.sits.find((x) => x.id === store.activeSitId && !x.end) || null;
@@ -1606,7 +1625,7 @@
       $('sitBucks').value = sit.end ? sit.bucks : bucks;
       $('sitDoes').value = sit.end ? sit.does : others;
       $('sitFromSightings').textContent = sg.length ? `${sg.length} sighting${sg.length > 1 ? 's' : ''} logged during this sit` : '';
-      fillChips('sitBusted', BUSTED, sit.busted || 'no');
+      $('sitTags').innerHTML = Object.entries(SIT_TAGS).map(([k, v]) => `<button type="button" data-v="${k}" class="${sitTags(sit).includes(k) ? 'on' : ''}">${v}</button>`).join('');
       $('sitNotes').value = sit.notes || '';
     }
     updateSitSnap();
@@ -1648,7 +1667,8 @@
     sit.end = t.toISOString();
     sit.bucks = Math.max(0, Number($('sitBucks').value) || 0);
     sit.does = Math.max(0, Number($('sitDoes').value) || 0);
-    sit.busted = chipValue('sitBusted') || 'no';
+    sit.tags = [...$('sitTags').querySelectorAll('button.on')].map((b) => b.dataset.v);
+    sit.busted = sit.tags.includes('winded') ? 'winded' : sit.tags.includes('seen') ? 'saw' : 'no';
     sit.notes = $('sitNotes').value.trim().slice(0, 300);
     sit.endSnap = snapshotAt(t) || sit.endSnap || null;
     sit.pred = predictionFor(new Date(sit.start), t) || sit.pred || null;
@@ -1682,7 +1702,7 @@
     return {
       title: `${esc(st ? st.name : 'Stand')} · ${sit.end ? `${deer} deer${sit.bucks ? ` (${sit.bucks} buck${sit.bucks > 1 ? 's' : ''})` : ''}` : 'in progress'}`,
       sub: `${s0.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${fmtTime(s0)}${sit.end ? ` – ${fmtTime(new Date(sit.end))} (${sitHours(sit).toFixed(1)} h)` : ''}`,
-      meta: [w, sit.pred ? `Score ${sit.pred.avg}` : '', sit.busted && sit.busted !== 'no' ? BUSTED[sit.busted] : ''].filter(Boolean).join(' · '),
+      meta: [w, sit.pred ? `Score ${sit.pred.avg}` : '', ...sitTags(sit).map((k) => SIT_TAGS[k])].filter(Boolean).join(' · '),
     };
   }
 
@@ -1701,9 +1721,12 @@
 
   // Deer seen per hour, grouped by what the app predicted: does a higher score mean more deer here?
   function renderScorecard() {
-    const done = store.sits.filter((x) => x.end && sitHours(x) >= 0.25);
+    const ended = store.sits.filter((x) => x.end && sitHours(x) >= 0.25);
+    // A sit blown up on the walk-in says nothing about whether deer were moving.
+    const blown = ended.filter((x) => (x.tags || []).includes('bumped-in'));
+    const done = ended.filter((x) => !blown.includes(x));
     const el = $('scorecard');
-    if (!done.length) { el.innerHTML = ''; return; }
+    if (!ended.length) { el.innerHTML = '<p class="empty-hint">Log a few sits and this shows whether high-score days really produce more deer on your property.</p>'; return; }
     const groups = [['High score (65+)', (p) => p >= 65], ['Medium (50–64)', (p) => p >= 50 && p < 65], ['Low (under 50)', (p) => p < 50]];
     const rows = groups.map(([label, test]) => {
       const g = done.filter((x) => x.pred && test(x.pred.avg));
@@ -1716,19 +1739,21 @@
     const totalHrs = done.reduce((a, x) => a + sitHours(x), 0);
     const totalDeer = done.reduce((a, x) => a + x.bucks + x.does, 0);
     const stands = store.stands.map((st) => {
-      const g = done.filter((x) => x.standId === st.id);
-      if (!g.length) return null;
+      const all = ended.filter((x) => x.standId === st.id);
+      if (!all.length) return null;
+      const g = all.filter((x) => !blown.includes(x));
+      const bumps = all.length - g.length;
       const hrs = g.reduce((a, x) => a + sitHours(x), 0);
       const deer = g.reduce((a, x) => a + x.bucks + x.does, 0);
       const winds = g.filter((x) => x.startSnap && x.bucks + x.does > 0).map((x) => DIRS8[Math.round(x.startSnap.dir / 45) % 8]);
       const c = {}; winds.forEach((w) => { c[w] = (c[w] || 0) + 1; });
       const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
       return `<div class="list-row static"><span class="tile">${icon('ladder')}</span><span class="row-text"><strong>${esc(st.name)}</strong>
-        <span>${g.length} sit${g.length > 1 ? 's' : ''} · ${hrs.toFixed(1)} h · ${(deer / hrs).toFixed(1)} deer/hr · ${g.reduce((a, x) => a + x.bucks, 0)} bucks${best ? ` · deer most often on ${best[0]} wind` : ''}</span></span></div>`;
+        <span>${all.length} sit${all.length > 1 ? 's' : ''}${g.length ? ` · ${hrs.toFixed(1)} h · ${(deer / hrs).toFixed(1)} deer/hr · ${g.reduce((a, x) => a + x.bucks, 0)} bucks` : ''}${best ? ` · deer most often on ${best[0]} wind` : ''}${bumps ? ` · <b class="hot">bumped deer walking in ${bumps}×</b>` : ''}</span></span></div>`;
     }).filter(Boolean).join('');
     el.innerHTML = `<h3 class="section">How's the score doing?</h3>
       <div class="card">
-        <p class="muted small" style="margin-top:0">${done.length} sit${done.length > 1 ? 's' : ''}, ${totalHrs.toFixed(1)} hours, ${totalDeer} deer. ${done.length < 15 ? 'Fewer than 15 sits is mostly noise. Keep logging every sit, including the empty ones.' : 'If high-score sits produce more deer per hour, the score is working on your property.'}</p>
+        <p class="muted small" style="margin-top:0">${blown.length ? `${blown.length} sit${blown.length > 1 ? 's' : ''} where deer were bumped walking in ${blown.length > 1 ? 'are' : 'is'} left out. ` : ''}${done.length} sit${done.length === 1 ? '' : 's'}, ${totalHrs.toFixed(1)} hours, ${totalDeer} deer. ${done.length < 15 ? 'Fewer than 15 sits is mostly noise. Keep logging every sit, including the empty ones.' : 'If high-score sits produce more deer per hour, the score is working on your property.'}</p>
         <div class="score-bars">${rows.map((r) => `<div class="score-bar"><span>${r.label}<br><span class="muted small">${r.n} sit${r.n === 1 ? '' : 's'}</span></span>
           <span class="track"><span style="width:${r.rate != null ? Math.max(3, (r.rate / maxRate) * 100) : 0}%;background:var(--orange)"></span></span>
           <b>${r.rate != null ? `${r.rate.toFixed(1)}/hr` : '—'}</b></div>`).join('')}</div>
@@ -1916,6 +1941,20 @@
     });
     $('sightingForm').addEventListener('submit', (e) => { e.preventDefault(); if (saveSighting()) $('sightingDialog').close(); });
     $('sightingClose').addEventListener('click', () => { pendingSighting = null; sightingContext = null; $('sightingDialog').close(); });
+    // Section tabs on Forecast and Log
+    const setTab = (group, tab) => {
+      $(group).querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+      const panels = group === 'detailTabs' ? '.detail-panel' : '.log-panel';
+      document.querySelectorAll(panels).forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== tab));
+      try { localStorage.setItem(`huntsmart.tab.${group}`, tab); } catch (e) { /* ignore */ }
+      if (tab === 'pressure' && model) renderPressure(model.days[selectedDay].info);
+    };
+    ['detailTabs', 'logTabs'].forEach((g) => {
+      $(g).addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(g, b.dataset.tab); });
+      try { const saved = localStorage.getItem(`huntsmart.tab.${g}`); if (saved && $(g).querySelector(`[data-tab="${saved}"]`)) setTab(g, saved); } catch (e) { /* ignore */ }
+    });
+    $('openSettings').addEventListener('click', () => { fillSettings(); $('settingsSheet').showModal(); });
+    $('openBackup').addEventListener('click', () => $('backupSheet').showModal());
     // Wind check
     $('wcToward').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-dir]');
@@ -1940,10 +1979,9 @@
     $('sitSawDeer').addEventListener('click', sawDeerDuringSit);
     $('sitStandList').addEventListener('click', (e) => { const b = e.target.closest('[data-sit-stand]'); if (b) selectSitStand(b.dataset.sitStand); });
     $('sitTime').addEventListener('change', updateSitSnap);
-    $('sitBusted').addEventListener('click', (e) => {
+    $('sitTags').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-v]');
-      if (!b) return;
-      $('sitBusted').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      if (b) b.classList.toggle('on');
     });
     $('sitForm').addEventListener('submit', (e) => { e.preventDefault(); if (submitSit()) $('sitDialog').close(); });
     $('sitClose').addEventListener('click', () => $('sitDialog').close());
@@ -2022,6 +2060,15 @@
         return;
       }
       if (e.target.closest('[data-windcheck]')) { openWindCheck(); return; }
+      const cl = e.target.closest('[data-close]');
+      if (cl) { $(cl.dataset.close).close(); return; }
+      const spm = e.target.closest('[data-spot-map]');
+      if (spm) {
+        const sp = store.spots.find((x) => x.id === spm.dataset.spotMap);
+        showView('map');
+        setTimeout(() => map && sp && map.setView([sp.lat, sp.lon], 17), 50);
+        return;
+      }
       const sitRow = e.target.closest('[data-sit]');
       if (sitRow) { const x = store.sits.find((y) => y.id === sitRow.dataset.sit); if (x) openSitSheet(x.end ? 'edit' : 'end', x.id); return; }
       const sm = e.target.closest('[data-sight-map]');
@@ -2055,7 +2102,6 @@
       save(); $('standDialog').close(); render();
     });
 
-    $('useGps').addEventListener('click', useGps);
     $('settingsForm').addEventListener('submit', (e) => {
       e.preventDefault();
       const lat = parseFloat($('setLat').value), lon = parseFloat($('setLon').value);
@@ -2068,6 +2114,7 @@
       s.units = $('setUnits').value;
       save();
       showToast('Settings saved');
+      if ($('settingsSheet').open) $('settingsSheet').close();
       if (locChanged) setLocation(lat, lon, null);
       else { buildModel(); render(); }
     });
@@ -2138,6 +2185,7 @@
             start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString(),
             bucks: Math.max(0, Math.min(99, Number(x.bucks) || 0)), does: Math.max(0, Math.min(99, Number(x.does) || 0)),
             busted: BUSTED[x.busted] ? x.busted : 'no', notes: String(x.notes || '').slice(0, 300),
+            tags: Array.isArray(x.tags) ? x.tags.filter((k) => SIT_TAGS[k]) : undefined,
             startSnap: snapIn(x.startSnap), endSnap: snapIn(x.endSnap),
             pred: x.pred && typeof x.pred === 'object' ? { avg: num(x.pred.avg), max: num(x.pred.max) } : null,
           }));

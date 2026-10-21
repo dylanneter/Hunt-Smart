@@ -524,3 +524,21 @@ button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
 .wc-result { text-align: center; font-weight: 700; font-size: 1.05rem; }
 .wc-src .tile { width: 40px; height: 40px; border-radius: 12px; }
 .wc-src .src-val { font-weight: 700; white-space: nowrap; }
+
+/* Layout cleanup */
+.seg { display: flex; gap: 4px; padding: 4px; background: var(--card); border-radius: 14px; margin-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
+.seg::-webkit-scrollbar { display: none; }
+.seg button { flex: 1 0 auto; border: 0; background: none; color: var(--muted); font-weight: 650; font-size: 0.85rem; padding: 9px 12px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
+.seg button.on { background: var(--card2); color: var(--fg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+#logTabs { margin-top: 16px; }
+.card.stack { margin-top: 10px; }
+.footnote.pad { padding: 0 16px 14px; margin: 0; }
+.wind-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.wind-meta #heroSrc { font-size: 0.72rem; color: var(--muted); text-align: left; line-height: 1.35; min-width: 0; flex: 1; }
+.wind-meta .wind-check-btn { margin: 0; flex: 0 0 auto; }
+#settingsForm { display: flex; flex-direction: column; }
+#settingsForm .list-row + .list-row, #settingsForm details.list-row { border-top: 1px solid var(--line); }
+.pick-entry { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); margin-top: -2px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.pick-entry b { color: var(--fg); font-weight: 600; }
+.pick-entry .pill { padding: 1px 7px; font-size: 0.7rem; }
+.empty-hint { padding: 18px 16px; color: var(--muted); text-align: center; }

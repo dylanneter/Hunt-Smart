@@ -96,11 +96,18 @@
   function describe(lat, lon) {
     const e0 = elevation(lat, lon);
     if (e0 == null) return null;
-    const h = 15;
+    // Fit the hillside over ~100 m (8 points at 50 m) rather than the few meters
+    // right under the stand: thermals follow the larger slope, not a ditch or a bump.
+    const h = 50;
     const at = (b) => elevation(...offset(lat, lon, b, h));
-    const n = at(0), s = at(180), e = at(90), w = at(270);
-    if ([n, s, e, w].some((v) => v == null)) return null;
-    const dzdx = (e - w) / (2 * h), dzdy = (n - s) / (2 * h); // rise per meter toward E and N
+    const pts = [0, 45, 90, 135, 180, 225, 270, 315].map((b) => [b, at(b)]);
+    if (pts.some(([, v]) => v == null)) return null;
+    let sx = 0, sy = 0, sxx = 0, syy = 0;
+    for (const [b, v] of pts) {
+      const x = Math.sin(b * RAD) * h, y = Math.cos(b * RAD) * h;
+      sx += x * (v - e0); sy += y * (v - e0); sxx += x * x; syy += y * y;
+    }
+    const dzdx = sx / sxx, dzdy = sy / syy; // least-squares rise per meter toward E and N
     const grad = Math.hypot(dzdx, dzdy);
     const slope = Math.atan(grad) / RAD;
     const aspect = grad > 0 ? ((Math.atan2(-dzdx, -dzdy) / RAD) + 360) % 360 : null; // downhill direction
@@ -116,7 +123,7 @@
    * upslope once the sun has warmed it. Returns { toward (bearing), speed (mph-equivalent), phase }.
    */
   function thermal(ground, t, day) {
-    if (!ground || ground.aspect == null || ground.slope < 2 || !day) return null;
+    if (!ground || ground.aspect == null || ground.slope < 3 || !day) return null;
     const H = 3600 * 1000;
     const sr = day.sunrise.getTime(), ss = day.sunset.getTime(), x = t.getTime();
     let phase;
@@ -124,7 +131,8 @@
     else if (x > sr + 3 * H && x < ss - 2.5 * H) phase = 'up';
     else phase = 'switching';
     if (phase === 'switching') return { phase, toward: null, speed: 0 };
-    const speed = 2.5 * Math.min(1, ground.slope / 8);
+    // Slope flows are typically 1-2 mph; they steer scent mainly when the wind is light.
+    const speed = 2 * Math.min(1, ground.slope / 10);
     return { phase, toward: phase === 'down' ? ground.aspect : (ground.aspect + 180) % 360, speed };
   }
 

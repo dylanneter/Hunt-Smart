@@ -114,7 +114,7 @@
   function driftAt(st, wind, t) {
     if (!wind || wind.dir == null) return null;
     const g = groundAt(st.lat, st.lon);
-    const th = g && model ? Terrain.thermal(g, t, model.getDay(t)) : null;
+    const th = g && model && store.settings.thermals !== false ? Terrain.thermal(g, t, model.getDay(t)) : null;
     return Terrain.scentDrift(wind, th) || { dir: wind.dir, speed: wind.speed, thermalShare: 0 };
   }
 
@@ -678,7 +678,8 @@
         <span class="row-text"><strong>${w.label}: ${esc(b.st.name)}</strong>
           <span>${dirName(w.sitW.dir)} ${fmtWind(w.sitW.speed)} · ${b.rating ? b.rating.text : ''}${e ? ` · route ${e.label.toLowerCase()}` : ''}</span>
           ${walk ? `<span>${w.label === 'Right now' && how ? how : walk}</span>` : how ? `<span>${how.charAt(0).toUpperCase() + how.slice(1)}</span>` : ''}
-          ${b.allBad ? '<span class="hot">No stand has a good wind. This is the least bad option.</span>' : ''}</span>
+          ${b.allBad ? '<span class="hot">No stand has a good wind. This is the least bad option.</span>' : b.why ? `<span>Why: ${esc(b.why)}</span>` : ''}
+          ${b.others.length ? `<span class="muted small">Others: ${b.others.map((o) => `${esc(o.st.name)} ${o.rating ? o.rating.text.toLowerCase() : 'no winds set'}`).join(' · ')}</span>` : ''}</span>
       </div>`;
     }).join('');
   }
@@ -934,6 +935,7 @@
     $('streaksToggle').checked = store.settings.streaks !== false;
     $('suggestToggle').checked = store.settings.suggest !== false;
     document.querySelectorAll('#layersDialog [data-setting]').forEach((cb) => { cb.checked = store.settings[cb.dataset.setting] !== false; });
+    $('thermalsToggle').checked = store.settings.thermals !== false;
     $('sightingsToggle').checked = store.settings.showSightings !== false;
     $('layersDialog').showModal();
   }
@@ -1178,17 +1180,36 @@
   // Best entry for a stand at a given wind: the best drawn route, or a suggested approach side.
   // Best stand for a sit: wind rating at sit time first, then how clean the walk in is.
   // Returns { st, rating, entry, allBad } or null.
+  //
+  // Ranking: wind rating dominates. The walk-in only breaks ties, in coarse bands, and a
+  // suggested approach (no drawn route) counts as "unknown" rather than perfect, so stands
+  // without routes don't win by default. Stands sat in the last day or two give way to
+  // others so one stand doesn't get over-pressured.
   function bestStand(sitWind, sitT, walkWind, walkT) {
     const stands = nearbyStands();
     if (!stands.length || !sitWind) return null;
     const RANK = { 'r-good': 3, 'r-marg': 2, 'r-unk': 1, 'r-bad': 0 };
+    const ENTRY = { 'r-good': 3, 'r-marg': 2, 'r-bad': 0 };
     const scored = stands.map((st) => {
       const rating = rateStand(st, sitWind, sitT);
       const entry = walkWind ? entryFor(st, walkWind, walkT) : null;
-      return { st, rating, entry, rank: RANK[rating ? rating.cls : 'r-unk'] * 100 + (entry ? entry.score : 50) };
+      const entryRank = !entry ? 1.5 : entry.suggested ? 1.5 : ENTRY[entry.cls] ?? 1.5;
+      const last = store.sits.filter((x) => x.standId === st.id).map((x) => new Date(x.start)).sort((a, b) => b - a)[0];
+      const hoursSince = last ? (sitT - last) / HOUR : Infinity;
+      const pressure = hoursSince < 30 ? 1 : hoursSince < 54 ? 0.5 : 0;
+      return { st, rating, entry, pressure, hoursSince, rank: RANK[rating ? rating.cls : 'r-unk'] * 10 + entryRank - pressure * 1.6 };
     }).sort((a, b) => b.rank - a.rank);
     const top = scored[0];
-    return { ...top, allBad: top.rating && top.rating.cls === 'r-bad' };
+    // Why this stand: compare with the runner-up.
+    let why = '';
+    const next = scored[1];
+    if (next) {
+      const tr = top.rating ? top.rating.cls : 'r-unk', nr = next.rating ? next.rating.cls : 'r-unk';
+      if (RANK[tr] > RANK[nr]) why = `Best wind of your ${scored.length} stands`;
+      else if (next.pressure > top.pressure) why = `${next.st.name} was sat recently; giving it a rest`;
+      else why = `Same wind as ${next.st.name}, cleaner walk-in`;
+    }
+    return { ...top, why, others: scored.slice(1), allBad: top.rating && top.rating.cls === 'r-bad' };
   }
 
   // How often deer got bumped walking in on a route, from the sit log.
@@ -2057,6 +2078,7 @@
     document.querySelectorAll('#layersDialog [data-setting]').forEach((cb) => cb.addEventListener('change', () => {
       store.settings[cb.dataset.setting] = cb.checked; save(); renderMapLayers();
     }));
+    $('thermalsToggle').addEventListener('change', (e) => { store.settings.thermals = e.target.checked; save(); render(); });
     $('suggestToggle').addEventListener('change', (e) => { store.settings.suggest = e.target.checked; save(); renderMapLayers(); });
     $('layersBtn').addEventListener('click', openLayers);
     $('layerGrid').addEventListener('click', (e) => {

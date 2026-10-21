@@ -1,5 +1,5 @@
 /* Offline support: app shell is cached, weather is network-first, map tiles are cached as you view them. */
-const VERSION = 'hs-v13';
+const VERSION = 'hs-v14';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/astro.js', 'js/movement.js', 'js/routes.js', 'js/terrain.js',

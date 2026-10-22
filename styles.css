@@ -589,3 +589,6 @@ button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
 .lg-line.dashed { border-top-style: dashed; border-top-color: #e8c43d; }
 .lg-line.dotted { border-top: 4px dotted var(--orange); }
 .lg-star { background: var(--orange); color: var(--orange-ink); text-align: center; line-height: 14px; font-size: 11px; }
+
+.route-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.route-btns .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 12px 8px; font-size: 0.88rem; }

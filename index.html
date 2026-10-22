@@ -307,7 +307,7 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 17 (Data &amp; usability review)</p>
+      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 18 (GPS routes)</p>
     </section>
   </main>
 
@@ -348,7 +348,10 @@
         <div class="field-block" id="routeBlock">
           <span>Routes in</span>
           <div class="list route-list" id="routeList"></div>
-          <button type="button" class="btn ghost" id="drawRouteBtn"><svg class="ic sm"><use href="#i-route"/></svg> Draw a route in</button>
+          <div class="route-btns">
+            <button type="button" class="btn ghost" id="drawRouteBtn"><svg class="ic sm"><use href="#i-route"/></svg> Draw a route</button>
+            <button type="button" class="btn ghost" id="recordRouteBtn"><svg class="ic sm"><use href="#i-walk"/></svg> Record with GPS</button>
+          </div>
         </div>
         <label class="toggle-row"><span>Wind always wins here<br><small class="muted">Exposed stand (cliff, ridge top, open field): ignore thermals</small></span><input type="checkbox" id="standNoThermals"></label>
         <label class="field-block"><span>Type</span>

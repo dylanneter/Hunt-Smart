@@ -951,7 +951,7 @@
     standLayer = L.layerGroup().addTo(map);
     drawLayer = L.layerGroup().addTo(map);
     if (hasLoc()) frameArea(map, 13);
-    map.on('click', (e) => { if (drawing) addDrawPoint(e.latlng); });
+    map.on('click', (e) => { if (drawing && drawing.mode !== 'gps') addDrawPoint(e.latlng); });
     map.on('move', () => { if (placing) updateElevChip(); });
     setupSlider();
     renderMapLayers();
@@ -1071,7 +1071,7 @@
       const mk = L.marker([s.lat, s.lon], { icon: icn, draggable: interactive, interactive }).addTo(layers.stands);
       if (interactive) {
         const driftNote = drift && drift.thermalShare > 0.2 ? `<br><span class="small">Scent drifting ${dirName(drift.toward)} (wind + ${Terrain.thermal(ground, t, model.getDay(t)).phase === 'down' ? 'downhill' : 'uphill'} thermal)</span>` : '';
-        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}${driftNote}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}${s.facing != null ? ` · Faces ${DIRS8[Math.round(s.facing / 45) % 8]}` : ''}</span>${ground ? `<br><span class="small">${groundText(ground)}</span>` : ''}<br><button class="btn" data-edit="${s.id}">Edit stand</button> <button class="btn ghost" data-route-for="${s.id}">Draw route</button>`);
+        mk.bindPopup(`<strong>${esc(s.name)}</strong><br>${r.text}${driftNote}<br><span class="small">Good: ${s.goodWinds.join(', ') || 'not set'}${s.facing != null ? ` · Faces ${DIRS8[Math.round(s.facing / 45) % 8]}` : ''}</span>${ground ? `<br><span class="small">${groundText(ground)}</span>` : ''}<br><button class="btn" data-edit="${s.id}">Edit stand</button> <button class="btn ghost" data-route-for="${s.id}">Draw route</button> <button class="btn ghost" data-record-for="${s.id}">Record route</button>`);
         mk.on('dragend', () => {
           const ll = mk.getLatLng();
           s.lat = ll.lat; s.lon = ll.lng; save(); render();
@@ -1160,17 +1160,19 @@
       + '<div class="sheet-section">Hunt log</div>'
       + row('data-add="sighting"', 'binoculars', 'Deer sighting', 'Mark where you saw deer. Weather and wind are saved with it.')
       + '<div class="sheet-section">Routes</div>'
-      + row('data-add="route"', 'route', 'Route into a stand', 'Tap points from where you park to the stand. Draw a few and the app picks the best one for the wind.')
+      + row('data-add="route"', 'route', 'Draw a route', 'Tap points from where you park to the stand. Draw a few and the app picks the best one for the wind.')
+      + row('data-add="record"', 'walk', 'Record a route with GPS', 'Start where you park and walk in. Your actual path is saved as a route.')
       + '<div class="sheet-section">Deer sign</div>'
       + Object.entries(SPOT_TYPES).map(([k, t]) => row(`data-add="${k}"`, t.icon, t.label, t.sub)).join('');
     $('addSheet').showModal();
   }
 
-  function chooseStandForRoute() {
+  function chooseStandForRoute(mode = 'draw') {
     if (!store.stands.length) { showToast('Add a stand first'); return; }
-    if (store.stands.length === 1) { $('addSheet').close(); startDrawing(store.stands[0].id); return; }
+    const attr = mode === 'gps' ? 'data-record-for' : 'data-route-for';
+    if (store.stands.length === 1) { $('addSheet').close(); (mode === 'gps' ? startRecording : startDrawing)(store.stands[0].id); return; }
     $('addSheetSub').textContent = 'Which stand is this route for?';
-    $('addSheetBody').innerHTML = store.stands.map((st) => `<button type="button" class="list-row" data-route-for="${st.id}"><span class="tile">${icon('ladder')}</span><span class="row-text"><strong>${esc(st.name)}</strong><span>${(st.routes || []).length} route(s) so far</span></span></button>`).join('');
+    $('addSheetBody').innerHTML = store.stands.map((st) => `<button type="button" class="list-row" ${attr}="${st.id}"><span class="tile">${icon('ladder')}</span><span class="row-text"><strong>${esc(st.name)}</strong><span>${(st.routes || []).length} route(s) so far</span></span></button>`).join('');
   }
 
   // ---------- Route drawing ----------
@@ -1208,20 +1210,93 @@
   }
 
   function stopDrawing() {
+    if (drawing && drawing.mode === 'gps') stopGps();
     drawing = null;
     if (drawLayer) drawLayer.clearLayers();
     $('drawBar').classList.add('hidden');
+    $('drawUndo').classList.remove('hidden');
+    $('drawDone').textContent = 'Finish route';
     $('mapScrub').classList.remove('hidden');
+  }
+
+  // ---------- GPS route recording ----------
+  // Walk your way in with the app open; points are kept only when GPS is accurate and
+  // you've moved a few meters, and jumps that would mean running are thrown out.
+  let gpsWatch = null, wakeLock = null, gpsMarker = null;
+  function startRecording(standId) {
+    const st = store.stands.find((x) => x.id === standId);
+    if (!st) return;
+    if (!navigator.geolocation) { showToast('GPS is not available on this device'); return; }
+    showView('map');
+    setTimeout(() => {
+      if (placing) setPlacing(false);
+      drawing = { standId, pts: [], mode: 'gps', meters: 0 };
+      $('drawHint').textContent = 'Getting GPS… start where you park';
+      $('drawUndo').classList.add('hidden');
+      $('drawDone').textContent = 'Finish at stand';
+      $('drawBar').classList.remove('hidden');
+      $('mapScrub').classList.add('hidden');
+      redrawDraft();
+      keepAwake();
+      gpsWatch = navigator.geolocation.watchPosition(onGps, (err) => {
+        // Timeouts and brief signal loss are normal under trees; only a denied permission stops recording.
+        if (err.code === 1) $('drawHint').textContent = 'Location permission is off. Allow it to record a route.';
+        else if (!drawing || !drawing.pts.length) $('drawHint').textContent = 'Searching for GPS…';
+      }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+    }, 60);
+  }
+
+  function onGps(pos) {
+    if (!drawing || drawing.mode !== 'gps') return;
+    const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+    const here = L.latLng(lat, lon);
+    if (gpsMarker) gpsMarker.setLatLng(here);
+    else gpsMarker = L.circleMarker(here, { radius: 8, color: '#fff', weight: 3, fillColor: '#3d8bfd', fillOpacity: 1 }).addTo(map);
+    map.panTo(here, { animate: true });
+    const acc = Math.round(accuracy * 3.281);
+    if (accuracy > 30) { $('drawHint').textContent = `Waiting for better GPS (±${acc} ft)…`; return; }
+    const pts = drawing.pts;
+    const now = Date.now();
+    let last = pts.length ? pts[pts.length - 1] : null;
+    let d = last ? here.distanceTo(last) : Infinity;
+    const dt = last ? (now - drawing.lastT) / 1000 : 1;
+    if (last && d < 4) { $('drawHint').textContent = `Recording · ${ftOrM(drawing.meters)} · GPS ±${acc} ft`; return; }
+    if (last && d / Math.max(dt, 1) > 6) {
+      // Faster than a jog: usually a GPS jump, so skip it. But if readings keep agreeing with
+      // each other away from the last point, the last point was the bad one (e.g. a stale first fix).
+      const prevReject = drawing.rejected;
+      drawing.rejected = [lat, lon];
+      if (!prevReject || here.distanceTo(prevReject) > 25) return;
+      if (pts.length === 1) { pts.length = 0; drawing.meters = 0; last = null; } else d = here.distanceTo(last);
+    }
+    drawing.rejected = null;
+    pts.push([lat, lon]);
+    if (last) drawing.meters += d;
+    drawing.lastT = now;
+    $('drawHint').textContent = `Recording · ${ftOrM(drawing.meters)} · GPS ±${acc} ft. Keep the app open.`;
+    redrawDraft();
+  }
+
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* not supported */ }
+  }
+  function stopGps() {
+    if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch);
+    gpsWatch = null;
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
   }
 
   function finishDrawing() {
     if (!drawing || !drawing.pts.length) return;
     const st = store.stands.find((x) => x.id === drawing.standId);
+    const gps = drawing.mode === 'gps';
+    if (gps && drawing.pts.length < 2) { showToast('Walk a little farther first. Only one GPS point so far.'); return; }
     const pts = drawing.pts.slice();
     if (L.latLng(pts[pts.length - 1]).distanceTo([st.lat, st.lon]) > 10) pts.push([st.lat, st.lon]);
     st.routes = st.routes || [];
-    const name = `Route ${String.fromCharCode(65 + st.routes.length % 26)}`;
-    st.routes.push({ id: Date.now().toString(36), name, points: pts });
+    const name = `Route ${String.fromCharCode(65 + st.routes.length % 26)}${gps ? ' (GPS)' : ''}`;
+    st.routes.push({ id: Date.now().toString(36), name, points: pts, recorded: gps || undefined });
     save();
     stopDrawing();
     render();
@@ -2205,6 +2280,7 @@
       if (!b) return;
       const kind = b.dataset.add;
       if (kind === 'route') { chooseStandForRoute(); return; }
+      if (kind === 'record') { chooseStandForRoute('gps'); return; }
       $('addSheet').close();
       setPlacing(kind);
     });
@@ -2237,6 +2313,12 @@
       saveStand();
       $('standDialog').close();
       startDrawing(id);
+    });
+    $('recordRouteBtn').addEventListener('click', () => {
+      const id = editingId;
+      saveStand();
+      $('standDialog').close();
+      startRecording(id);
     });
     // Hunt log
     $('logSightingBtn').addEventListener('click', startSighting);
@@ -2367,6 +2449,8 @@
         setTimeout(() => map && s && map.setView([s.lat, s.lon], 17), 50);
         return;
       }
+      const rec = e.target.closest('[data-record-for]');
+      if (rec) { if (map) map.closePopup(); if ($('addSheet').open) $('addSheet').close(); startRecording(rec.dataset.recordFor); return; }
       const rf = e.target.closest('[data-route-for]');
       if (rf) { if (map) map.closePopup(); if ($('addSheet').open) $('addSheet').close(); startDrawing(rf.dataset.routeFor); return; }
       const dr = e.target.closest('[data-del-route], [data-rename-route]');
@@ -2553,6 +2637,7 @@
     window.addEventListener('resize', () => { if (model) renderPressure(model.days[selectedDay].info); });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { stopAutoRefresh(); return; }
+      if (drawing && drawing.mode === 'gps') keepAwake(); // the screen wake lock drops when the app is hidden
       renderLiveStatus(); fetchForecast(); startAutoRefresh();
     });
     window.addEventListener('online', () => fetchForecast(true));

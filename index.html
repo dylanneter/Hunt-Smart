@@ -146,6 +146,8 @@
         </div>
       </div>
 
+      <div id="setupCard"></div>
+
       <h3 class="section">Today's plan</h3>
       <div class="card">
         <div class="outlook-head">
@@ -233,6 +235,8 @@
         <button class="btn ghost wide" id="logSightingBtn"><svg class="ic"><use href="#i-binoculars"/></svg> Log a sighting</button>
       </div>
 
+      <div id="backupNudge"></div>
+
       <div class="seg" id="logTabs">
         <button data-tab="sits" class="on">Sits</button>
         <button data-tab="sightings">Sightings</button>
@@ -294,7 +298,7 @@
         </button>
         <button class="list-row" id="openBackup">
           <span class="tile"><svg class="ic"><use href="#i-download"/></svg></span>
-          <span class="row-text"><strong>Backup &amp; share</strong><span>Export or import stands, routes and your log</span></span>
+          <span class="row-text"><strong>Backup &amp; share</strong><span id="backupSub">Export or import stands, routes and your log</span></span>
           <svg class="ic chev"><use href="#i-chev-r"/></svg>
         </button>
         <button id="installBtn" class="list-row hidden">
@@ -303,12 +307,13 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 16 (Thermal fix)</p>
+      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 17 (Data &amp; usability review)</p>
     </section>
   </main>
 
   <div class="sit-bar hidden" id="sitBar">
     <div class="sit-bar-text"><span class="live-dot live"></span><span><strong id="sitBarStand">On stand</strong><span id="sitBarTime">0:00</span></span></div>
+    <button class="btn ghost icon-only" data-windcheck aria-label="Wind check"><svg class="ic sm"><use href="#i-wind"/></svg></button>
     <button class="btn ghost" id="sitSawDeer"><svg class="ic sm"><use href="#i-binoculars"/></svg> Saw deer</button>
     <button class="btn orange" id="sitEndBtn"><svg class="ic sm"><use href="#i-stop"/></svg> End</button>
   </div>
@@ -477,7 +482,8 @@
             </div>
             <div class="muted small" id="sitFromSightings"></div>
           </div>
-          <div class="field-block"><span>What happened <em class="muted">(tap all that apply)</em></span><div class="chips" id="sitTags"></div></div>
+          <div class="field-block"><span>Deer came from <em class="muted">(tap all that apply)</em></span><div class="compass-pick facing" id="sitApproach"></div></div>
+          <div class="field-block"><span>What happened <em class="muted">(tap all that apply)</em></span><div id="sitTags"></div></div>
           <label class="field-block"><span>Notes</span><textarea id="sitNotes" rows="2" maxlength="300"></textarea></label>
         </div>
         <div class="snap" id="sitSnap"></div>
@@ -503,8 +509,10 @@
         <div class="field-block" id="sgDeerBlock"><span>Which buck</span>
           <div class="row"><select id="sgDeer"></select><button type="button" class="btn ghost" id="sgNewDeer">New</button></div>
         </div>
+        <div class="field-block" id="sgSizeBlock"><span>Buck size</span><div class="chips" id="sgSize"></div></div>
         <label class="field-block"><span>How many</span><input id="sgCount" type="number" min="1" max="50" value="1" inputmode="numeric"></label>
         <div class="field-block"><span>Doing</span><div class="chips" id="sgActivity" data-single="1"></div></div>
+        <div class="field-block"><span>Distance</span><div class="chips" id="sgRange"></div></div>
         <div class="field-block"><span>Heading <em class="muted">(direction it was moving)</em></span><div class="compass-pick facing" id="sgHeading"></div></div>
         <label class="field-block"><span>Seen from</span><select id="sgFrom"></select></label>
         <label class="field-block"><span>Notes</span><textarea id="sgNotes" rows="2" maxlength="300"></textarea></label>
@@ -550,6 +558,17 @@
         <label class="toggle-row"><span>Hillshade (terrain relief)</span><input type="checkbox" id="hillshadeToggle"></label>
         <label class="toggle-row"><span>Place labels</span><input type="checkbox" id="labelsToggle"></label>
         <label class="toggle-row"><span>Animated wind</span><input type="checkbox" id="streaksToggle"></label>
+        <div class="sheet-section flush">What the map shows</div>
+        <div class="legend">
+          <div><i class="lg-cone good"></i>Scent cone: good wind for that stand</div>
+          <div><i class="lg-cone marg"></i>Marginal wind</div>
+          <div><i class="lg-cone bad"></i>Bad wind: your scent blows where deer come from</div>
+          <div><i class="lg-wedge"></i>White wedge: the way the stand faces</div>
+          <div><i class="lg-line solid"></i>Solid route ★: best way in for this hour</div>
+          <div><i class="lg-line dashed"></i>Dashed route: other routes (color = rating)</div>
+          <div><i class="lg-line dotted"></i>Orange dots: suggested approach (no route drawn)</div>
+          <div><i class="lg-star">★</i>Orange label: recommended stand right now</div>
+        </div>
       </div>
     </form>
   </dialog>

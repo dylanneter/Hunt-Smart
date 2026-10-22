@@ -559,3 +559,33 @@ button.wind-dial-pill { border: 0; font: inherit; cursor: pointer; }
 .map-pill { font-size: 0.9rem; padding: 8px 4px; min-width: 128px; }
 .map-pill .scrub-step { padding: 4px 6px; }
 #hourLabel { white-space: nowrap; }
+
+.tag-group { margin-bottom: 12px; }
+.tag-group:last-child { margin-bottom: 0; }
+.tag-group-label { font-size: 0.75rem; color: var(--muted); margin: 0 0 6px; }
+.chips button.on.bad { background: var(--bad); border-color: var(--bad); color: #fff; }
+.chips button.on.good { background: var(--good); border-color: var(--good); color: #10170b; }
+
+/* Usability pass */
+.sit-bar .btn.icon-only { padding: 10px; }
+.setup-card { background: var(--card); border-radius: var(--radius); padding: 4px 0; margin-top: 16px; overflow: hidden; }
+.setup-card .reco-head { justify-content: space-between; }
+.setup-card .reco-head button { background: none; border: 0; color: var(--muted); font-size: 0.82rem; cursor: pointer; }
+.setup-step .tile { width: 40px; height: 40px; border-radius: 12px; }
+.setup-step.done .tile { background: rgba(111, 207, 90, 0.18); color: var(--good); border-color: transparent; }
+.setup-step.done strong { text-decoration: line-through; color: var(--muted); }
+.nudge { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--orange); border-radius: 16px; padding: 12px 14px; margin-top: 14px; }
+.nudge .ic { color: var(--orange); }
+.nudge span { flex: 1; font-size: 0.88rem; }
+.nudge .btn { padding: 8px 12px; font-size: 0.85rem; }
+.reco-row .btn.start-here { align-self: center; padding: 8px 12px; font-size: 0.82rem; flex: 0 0 auto; }
+.legend { display: flex; flex-direction: column; gap: 8px; font-size: 0.85rem; color: var(--muted); }
+.legend div { display: flex; align-items: center; gap: 10px; }
+.legend i { flex: 0 0 28px; height: 14px; display: inline-block; border-radius: 3px; font-style: normal; }
+.lg-cone { clip-path: polygon(0 50%, 100% 0, 100% 100%); }
+.lg-cone.good { background: #6fcf5a; } .lg-cone.marg { background: #e8c43d; } .lg-cone.bad { background: #e5533d; }
+.lg-wedge { background: rgba(255, 255, 255, 0.5); clip-path: polygon(50% 100%, 0 0, 100% 0); }
+.lg-line { height: 0 !important; border-top: 4px solid #6fcf5a; border-radius: 0 !important; margin-top: 2px; }
+.lg-line.dashed { border-top-style: dashed; border-top-color: #e8c43d; }
+.lg-line.dotted { border-top: 4px dotted var(--orange); }
+.lg-star { background: var(--orange); color: var(--orange-ink); text-align: center; line-height: 14px; font-size: 11px; }

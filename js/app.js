@@ -123,7 +123,17 @@
   }
 
   // Stand rating from the actual scent drift; notes when thermals change the call.
+  // Ratings and route picks get asked for many times per screen; cache them until the next render.
+  let memo = new Map();
+  const memoKey = (kind, st, wind, t) => `${kind}|${st.id}|${Math.round(wind.dir)}|${Math.round((wind.speed || 0) * 2)}|${Math.round(t / 600000)}`;
   function rateStand(st, wind, t) {
+    if (!wind || wind.dir == null) return null;
+    const k = memoKey('rate', st, wind, t);
+    if (!memo.has(k)) memo.set(k, rateStandRaw(st, wind, t));
+    const r = memo.get(k);
+    return r ? { ...r } : r;
+  }
+  function rateStandRaw(st, wind, t) {
     if (!wind || wind.dir == null) return null;
     const d = driftAt(st, wind, t);
     const r = windRating(st, d.dir, d.speed);
@@ -389,6 +399,7 @@
   }
 
   function render() {
+    memo = new Map();
     if (!model) return;
     renderDayPicker();
     renderToday();
@@ -396,6 +407,8 @@
     renderStandList();
     renderLocation();
     renderLog();
+    renderSetup();
+    renderBackupNudge();
     if (map) renderMapLayers();
     renderLiveStatus();
     ensureTerrain();
@@ -657,6 +670,40 @@
     }
   }
 
+  // What a named buck's sightings have in common, for matching against upcoming sits.
+  function buckPatterns() {
+    return store.deer.map((d) => {
+      const sg = store.sightings.filter((x) => x.deerId === d.id && x.snap && x.snap.dir != null);
+      if (sg.length < 2) return null;
+      const temps = sg.map((x) => x.snap.temp).filter((v) => v != null);
+      return {
+        name: d.name, n: sg.length,
+        dirs: sg.map((x) => x.snap.dir),
+        phases: new Set(sg.map((x) => x.snap.sunPhase)),
+        trends: new Set(sg.map((x) => trendClass(x.snap.trend)).filter(Boolean)),
+        tmin: temps.length ? Math.min(...temps) : null, tmax: temps.length ? Math.max(...temps) : null,
+      };
+    }).filter(Boolean);
+  }
+  const trendClass = (dp) => (dp == null ? null : dp > 1 ? 'rising' : dp < -1 ? 'falling' : 'steady');
+
+  // Does a sit window look like the conditions a buck has shown up in? Wind must match.
+  function patternMatches(w, phase) {
+    if (!w.sitW) return [];
+    const hour = model.hours.find((x) => Math.abs(x.time - w.sitT) < HOUR / 2);
+    const trend = hour ? trendClass(hour.pressureTrend != null ? hour.pressureTrend / 2 : null) : null;
+    return buckPatterns().map((p) => {
+      const why = [];
+      if (!p.dirs.some((d) => angDiff(d, w.sitW.dir) <= 30)) return null;
+      why.push(`${dirName(w.sitW.dir)} wind`);
+      let score = 2;
+      if (p.phases.has(phase)) { score++; why.push(phase === 'dawn' ? 'near sunrise' : 'near sunset'); }
+      if (trend && p.trends.has(trend)) { score++; why.push(`${trend} pressure`); }
+      if (hour && hour.temp != null && p.tmin != null && hour.temp >= p.tmin - 5 && hour.temp <= p.tmax + 5) { score++; why.push(`${fmtTemp(hour.temp)}`); }
+      return score >= 4 ? { name: p.name, why } : null;
+    }).filter(Boolean);
+  }
+
   // "Recommended sit" for the morning and evening of the selected day (and right now, today).
   function renderReco(info) {
     const el = $('recoCard');
@@ -668,8 +715,8 @@
     if (live && now > info.legalStart && now < info.legalEnd) windows.push({ ic: 'clock', label: 'Right now', sitT: now, walkT: now, sitW: { dir: live.dir, speed: live.wind }, walkW: { dir: live.dir, speed: live.wind } });
     const amSit = new Date(info.sunrise.getTime() + HOUR), amWalk = new Date(info.legalStart.getTime() - 30 * 60000);
     const pmSit = new Date(info.sunset.getTime() - 1.5 * HOUR), pmWalk = new Date(info.sunset.getTime() - 3 * HOUR);
-    if (!(selectedDay === 0 && now > amSit)) windows.push({ ic: 'sunrise', label: 'Morning sit', sitT: amSit, walkT: amWalk, sitW: windAt(amSit), walkW: windAt(amWalk) });
-    if (!(selectedDay === 0 && now > pmSit)) windows.push({ ic: 'sunset', label: 'Evening sit', sitT: pmSit, walkT: pmWalk, sitW: windAt(pmSit), walkW: windAt(pmWalk) });
+    if (!(selectedDay === 0 && now > amSit)) windows.push({ ic: 'sunrise', label: 'Morning sit', phase: 'dawn', sitT: amSit, walkT: amWalk, sitW: windAt(amSit), walkW: windAt(amWalk) });
+    if (!(selectedDay === 0 && now > pmSit)) windows.push({ ic: 'sunset', label: 'Evening sit', phase: 'dusk', sitT: pmSit, walkT: pmWalk, sitW: windAt(pmSit), walkW: windAt(pmWalk) });
     if (!windows.length) { el.innerHTML = '<div class="reco-head">' + icon('star') + ' Recommended sit</div><p class="empty">Today\'s sits are over. Pick tomorrow above to plan it.</p>'; return; }
     el.innerHTML = '<div class="reco-head">' + icon('star') + ' Recommended sit</div>' + windows.map((w) => {
       const b = bestStand(w.sitW, w.sitT, w.walkW, w.walkT);
@@ -677,13 +724,16 @@
       const e = b.entry;
       const how = !e ? '' : e.suggested ? `come in from the <b>${dirName(e.bearing)}</b>` : `take <b>${esc(e.route.name)}</b>`;
       const walk = w.label === 'Right now' ? '' : `Walk in ~${fmtTime(w.walkT)}${how ? ', ' + how : ''}`;
+      const canStart = selectedDay === 0 && !activeSit();
       return `<div class="list-row reco-row" data-edit="${b.st.id}">
         <span class="tile ${b.rating ? b.rating.cls : 'r-unk'}">${icon(w.ic)}</span>
         <span class="row-text"><strong>${w.label}: ${esc(b.st.name)}</strong>
           <span>${dirName(w.sitW.dir)} ${fmtWind(w.sitW.speed)} · ${b.rating ? b.rating.text : ''}${e ? ` · route ${e.label.toLowerCase()}` : ''}</span>
           ${walk ? `<span>${w.label === 'Right now' && how ? how : walk}</span>` : how ? `<span>${how.charAt(0).toUpperCase() + how.slice(1)}</span>` : ''}
           ${b.allBad ? '<span class="hot">No stand has a good wind. This is the least bad option.</span>' : b.why ? `<span>Why: ${esc(b.why)}</span>` : ''}
+          ${w.phase ? patternMatches(w, w.phase).map((m) => `<span class="hot">★ Matches ${esc(m.name)}'s pattern: ${m.why.join(', ')}</span>`).join('') : ''}
           ${b.others.length ? `<span class="muted small">Others: ${b.others.map((o) => `${esc(o.st.name)} ${o.rating ? o.rating.text.toLowerCase() : 'no winds set'}`).join(' · ')}</span>` : ''}</span>
+        ${canStart ? `<button type="button" class="btn start-here" data-start-sit="${b.st.id}">Start sit</button>` : ''}
       </div>`;
     }).join('');
   }
@@ -771,6 +821,9 @@
       const code = hrs.length ? mode(hrs.filter((h) => h.time >= d.info.sunrise && h.time <= d.info.sunset).map((h) => h.code)) : null;
       const pp = hrs.length ? Math.max(...hrs.map((h) => h.precipProb || 0)) : null;
       const best = s && s.windows[0];
+      // Days whose sit windows look like a named buck's sightings.
+      const amT = new Date(d.info.sunrise.getTime() + HOUR), pmT = new Date(d.info.sunset.getTime() - 1.5 * HOUR);
+      const bucks = model.hours.length ? [...new Set([...patternMatches({ sitT: amT, sitW: windAt(amT) }, 'dawn'), ...patternMatches({ sitT: pmT, sitW: windAt(pmT) }, 'dusk')].map((m) => m.name))] : [];
       const wind = (label, w) => (w ? `<span>${label} ${arrowSvg(w.dir, 12)} <b>${dirName(w.dir)} ${Math.round(metric() ? w.speed * 1.609 : w.speed)}</b></span>` : '');
       return `<button class="week-row" data-day="${i}">
         <div class="wk-top">${icon(code != null ? wxIconName(code) : 'sun')}
@@ -779,7 +832,8 @@
         <span class="chip big ${s ? scoreClass(s.score) : ''}">${s ? s.score : '–'}</span>
         <div class="wk-meta">${wind('AM', am)}${wind('PM', pm)}
           ${best ? `<span>${icon('clock')} <b>${fmtTime(best.start)} – ${fmtTime(best.end)}</b></span>` : ''}
-          <span>${icon('moon')} ${d.info.moon.name}</span></div>
+          <span>${icon('moon')} ${d.info.moon.name}</span>
+          ${bucks.map((n) => `<span class="hot">★ ${esc(n)} pattern</span>`).join('')}</div>
       </button>`;
     }).join('');
   }
@@ -1182,6 +1236,19 @@
   }
 
   // Best entry for a stand at a given wind: the best drawn route, or a suggested approach side.
+  // A stand's track record from the sit log, shrunk toward the property average so a
+  // couple of lucky sits don't dominate. ratio > 1 = better than your average stand.
+  function standRecord(standId) {
+    const sits = store.sits.filter((x) => x.end && sitHours(x) >= 0.25 && !(x.tags || []).includes('bumped-in'));
+    const all = sits.reduce((a, x) => ({ h: a.h + sitHours(x), d: a.d + x.bucks + x.does }), { h: 0, d: 0 });
+    const mine = sits.filter((x) => x.standId === standId);
+    if (!mine.length || !all.h) return null;
+    const h = mine.reduce((a, x) => a + sitHours(x), 0), d = mine.reduce((a, x) => a + x.bucks + x.does, 0);
+    const avg = all.d / all.h || 0.1;
+    const shrunk = (d + 4 * avg) / (h + 4);
+    return { n: mine.length, hours: h, deer: d, rate: h ? d / h : 0, ratio: shrunk / avg };
+  }
+
   // Best stand for a sit: wind rating at sit time first, then how clean the walk in is.
   // Returns { st, rating, entry, allBad } or null.
   //
@@ -1201,7 +1268,10 @@
       const last = store.sits.filter((x) => x.standId === st.id).map((x) => new Date(x.start)).sort((a, b) => b - a)[0];
       const hoursSince = last ? (sitT - last) / HOUR : Infinity;
       const pressure = hoursSince < 30 ? 1 : hoursSince < 54 ? 0.5 : 0;
-      return { st, rating, entry, pressure, hoursSince, rank: RANK[rating ? rating.cls : 'r-unk'] * 10 + entryRank - pressure * 1.6 };
+      // Track record nudges ties (needs 2+ sits); it never beats a better wind.
+      const rec = standRecord(st.id);
+      const recBonus = rec && rec.n >= 2 ? Math.max(-0.8, Math.min(0.8, Math.log(rec.ratio))) : 0;
+      return { st, rating, entry, pressure, hoursSince, rec, recBonus, rank: RANK[rating ? rating.cls : 'r-unk'] * 10 + entryRank - pressure * 1.6 + recBonus };
     }).sort((a, b) => b.rank - a.rank);
     const top = scored[0];
     // Why this stand: compare with the runner-up.
@@ -1211,6 +1281,7 @@
       const tr = top.rating ? top.rating.cls : 'r-unk', nr = next.rating ? next.rating.cls : 'r-unk';
       if (RANK[tr] > RANK[nr]) why = `Best wind of your ${scored.length} stands`;
       else if (next.pressure > top.pressure) why = `${next.st.name} was sat recently; giving it a rest`;
+      else if (top.recBonus - next.recBonus > 0.2 && top.rec) why = `Same wind as ${next.st.name}, better track record (${top.rec.rate.toFixed(1)} deer/hr over ${top.rec.n} sits)`;
       else why = `Same wind as ${next.st.name}, cleaner walk-in`;
     }
     return { ...top, why, others: scored.slice(1), allBad: top.rating && top.rating.cls === 'r-bad' };
@@ -1235,6 +1306,12 @@
   }
 
   function entryFor(st, wind, t) {
+    if (!wind || wind.dir == null) return null;
+    const k = memoKey('entry', st, wind, t || 0);
+    if (!memo.has(k)) memo.set(k, entryForRaw(st, wind, t));
+    return memo.get(k);
+  }
+  function entryForRaw(st, wind, t) {
     if (!wind) return null;
     if (t) { const d = driftAt(st, wind, t); wind = { dir: d.dir, speed: d.speed }; }
     const routes = (st.routes || []).map((r) => ({ r, sc: scoreRouteWithHistory(r, st, wind) })).filter((x) => x.sc);
@@ -1452,6 +1529,8 @@
 
   // ---------- Hunt log ----------
   const KINDS = { buck: 'Buck', doe: 'Doe', fawn: 'Fawn', group: 'Group' };
+  const SIZES = { small: 'Small / young', mid: 'Mid-size', shooter: 'Shooter' };
+  const RANGES = { 'in-range': 'In range', close: 'Just out of range', far: 'Out of range' };
   const ACTIVITIES = { feeding: 'Feeding', traveling: 'Traveling', chasing: 'Chasing', bedded: 'Bedded', standing: 'Standing', spooked: 'Spooked' };
   let editingSightingId = null, pendingSighting = null, logFilter = 'all';
 
@@ -1462,32 +1541,116 @@
   const deerName = (id) => (store.deer.find((d) => d.id === id) || {}).name;
 
   // Conditions at a moment, saved with the sighting so the pattern survives after the forecast rolls off.
-  function snapshotAt(t) {
-    if (!model || !model.hours.length) return null;
+  // Conditions at a moment, saved with sightings and sits so patterns survive after the
+  // forecast rolls off. Near "now" it uses what was actually observed (your wind check or
+  // the nearest station) instead of the forecast. src defaults to the live forecast model.
+  function snapshotAt(t, src) {
+    src = src || model;
+    if (!src || !src.hours || !src.hours.length) return null;
     let i = -1, bd = Infinity;
-    model.hours.forEach((h, j) => { const d = Math.abs(h.time - t); if (d < bd) { bd = d; i = j; } });
+    src.hours.forEach((h, j) => { const d = Math.abs(h.time - t); if (d < bd) { bd = d; i = j; } });
     if (i < 0 || bd > HOUR) return null;
-    const h = model.hours[i];
-    const prev = model.hours[i - 3];
-    const day = model.getDay(t);
+    const h = src.hours[i];
+    const prev = src.hours[i - 3];
+    const day = src.getDay(t);
     const minsFrom = (x) => Math.round((t - x) / 60000);
     const sr = minsFrom(day.sunrise), ss = minsFrom(day.sunset);
     let sun;
     if (Math.abs(sr) <= 90) sun = sr >= 0 ? `${sr} min after sunrise` : `${-sr} min before sunrise`;
     else if (Math.abs(ss) <= 90) sun = ss >= 0 ? `${ss} min after sunset` : `${-ss} min before sunset`;
     else sun = t < day.solarNoon ? 'mid-morning' : t < day.sunset ? 'midday / afternoon' : 'after dark';
-    return {
+    const snap = {
       temp: h.temp, wind: h.wind, dir: h.dir, gust: h.gust, pressure: h.pressure,
       trend: prev && prev.pressure != null && h.pressure != null ? +(h.pressure - prev.pressure).toFixed(1) : null,
-      code: h.code, score: model.scores[i], moon: day.moon.name, sun,
+      code: h.code, score: src.scores[i], moon: day.moon.name, sun,
       sunPhase: Math.abs(sr) <= 90 ? 'dawn' : Math.abs(ss) <= 90 ? 'dusk' : 'midday',
+      src: src === model ? 'forecast' : 'history',
     };
+    if (src === model && Math.abs(t - Date.now()) < 45 * 60 * 1000) {
+      const live = liveConditions();
+      if (live) {
+        if (live.dir != null) snap.dir = live.dir;
+        if (live.wind != null) snap.wind = live.wind;
+        if (live.temp != null) snap.temp = live.temp;
+        if (live.gust != null) snap.gust = live.gust;
+        snap.src = live.checked ? 'wind check' : live.measured ? 'station' : 'forecast';
+      }
+    }
+    return snap;
+  }
+
+  // ---------- Weather history (fills in conditions for older sightings and sits) ----------
+  // Open-Meteo keeps ~3 months of past forecasts; the archive (ERA5) covers anything older.
+  const historyCache = {};
+  const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  function makeGetDay() {
+    const { lat, lon, legalBefore, legalAfter } = store.settings;
+    const legal = { before: Number(legalBefore) || 0, after: Number(legalAfter) || 0 };
+    const cache = {};
+    return (t) => { const k = dayKey(t); if (!cache[k]) cache[k] = Astro.dayInfo(t, lat, lon, legal); return cache[k]; };
+  }
+  async function fetchHistory(t) {
+    if (!hasLoc()) return null;
+    const day = Astro.startOfDay(new Date(t));
+    const key = isoDate(day);
+    if (historyCache[key]) return historyCache[key];
+    const prevDay = new Date(day); prevDay.setDate(prevDay.getDate() - 1);
+    const { lat, lon, rutPeak } = store.settings;
+    const hourly = 'temperature_2m,relative_humidity_2m,precipitation,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m';
+    const qs = `latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&hourly=${hourly}&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&timeformat=unixtime&start_date=${isoDate(prevDay)}&end_date=${key}`;
+    const ageDays = (Date.now() - t) / (24 * HOUR);
+    const urls = (ageDays < 85 ? [`https://api.open-meteo.com/v1/forecast?${qs}`] : []).concat(`https://archive-api.open-meteo.com/v1/archive?${qs}`);
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const d = await res.json();
+        const h = d.hourly;
+        if (!h || !h.time) continue;
+        const hours = h.time.map((x, i) => ({
+          time: new Date(x * 1000), temp: h.temperature_2m[i], rh: h.relative_humidity_2m[i], precip: h.precipitation[i],
+          code: h.weather_code[i], pressure: h.pressure_msl[i], wind: h.wind_speed_10m[i], dir: h.wind_direction_10m[i], gust: h.wind_gusts_10m[i],
+        }));
+        if (!hours.some((x) => x.wind != null)) continue;
+        const getDay = makeGetDay();
+        const scores = Movement.scoreHours(hours, getDay, { rutPeak: rutPeak ? new Date(`${rutPeak}T12:00:00`) : null });
+        historyCache[key] = { hours, scores, getDay };
+        return historyCache[key];
+      } catch (e) { /* try the next source */ }
+    }
+    return null;
+  }
+
+  // Fill in weather for any sighting or sit saved without it (backdated, or saved offline).
+  let backfilling = false;
+  async function backfillSnaps() {
+    if (backfilling || !hasLoc() || !navigator.onLine) return;
+    backfilling = true;
+    let changed = false;
+    try {
+      for (const sg of store.sightings.filter((x) => !x.snap).slice(0, 10)) {
+        const src = await fetchHistory(new Date(sg.time));
+        const sn = src && snapshotAt(new Date(sg.time), src);
+        if (sn) { sg.snap = sn; changed = true; }
+      }
+      for (const sit of store.sits.filter((x) => x.end && (!x.startSnap || !x.pred)).slice(0, 10)) {
+        const st = new Date(sit.start), en = new Date(sit.end);
+        const src = await fetchHistory(st);
+        if (!src) continue;
+        if (!sit.startSnap) sit.startSnap = snapshotAt(st, src);
+        if (!sit.endSnap) sit.endSnap = snapshotAt(en, src);
+        if (!sit.pred) sit.pred = predictionFor(st, en, src);
+        changed = true;
+      }
+    } finally { backfilling = false; }
+    if (changed) { save(); render(); }
   }
 
   function snapText(sn) {
-    if (!sn) return 'No weather saved (more than 2 days outside the forecast).';
+    if (!sn) return navigator.onLine ? 'Weather for this time will be filled in from weather history after you save.' : 'No weather yet. It will be filled in from weather history when you\'re back online.';
     const tr = sn.trend == null ? '' : sn.trend > 1 ? ' rising' : sn.trend < -1 ? ' falling' : ' steady';
-    return `<strong>${dirName(sn.dir)} ${fmtWind(sn.wind)}</strong> · ${fmtTemp(sn.temp)} · ${fmtPress(sn.pressure)}${tr} · ${sn.moon} · ${sn.sun} · Score ${sn.score ?? '–'}`;
+    const src = { 'wind check': ' (your wind check)', station: ' (station)', history: ' (weather history)' }[sn.src] || '';
+    return `<strong>${dirName(sn.dir)} ${fmtWind(sn.wind)}</strong>${src} · ${fmtTemp(sn.temp)} · ${fmtPress(sn.pressure)}${tr} · ${sn.moon} · ${sn.sun} · Score ${sn.score ?? '–'}`;
   }
 
   function fillChips(id, options, value) {
@@ -1508,6 +1671,8 @@
     $('sgTime').value = toLocalInput(sg ? new Date(sg.time) : new Date());
     fillChips('sgKind', KINDS, sg ? sg.kind : 'buck');
     fillChips('sgActivity', ACTIVITIES, sg ? sg.activity : null);
+    fillChips('sgSize', SIZES, sg ? sg.size : null);
+    fillChips('sgRange', RANGES, sg ? sg.range : null);
     $('sgCount').value = sg ? sg.count : 1;
     $('sgDeer').innerHTML = '<option value="">Unknown buck</option>' + store.deer.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     $('sgDeer').value = sg && sg.deerId ? sg.deerId : '';
@@ -1524,6 +1689,7 @@
 
   function updateSightingSheet() {
     $('sgDeerBlock').classList.toggle('hidden', chipValue('sgKind') !== 'buck');
+    $('sgSizeBlock').classList.toggle('hidden', chipValue('sgKind') !== 'buck');
     const t = new Date($('sgTime').value);
     const sg = editingSightingId ? store.sightings.find((x) => x.id === editingSightingId) : null;
     const sn = isNaN(t) ? null : snapshotAt(t) || (sg && Math.abs(new Date(sg.time) - t) < 60000 ? sg.snap : null);
@@ -1540,6 +1706,7 @@
       time: t.toISOString(), kind, count: Math.max(1, Math.min(50, Number($('sgCount').value) || 1)),
       deerId: kind === 'buck' ? $('sgDeer').value || null : null,
       activity: chipValue('sgActivity'), heading: hb ? DIRS8.indexOf(hb.dataset.dir) * 45 : null,
+      size: kind === 'buck' ? chipValue('sgSize') : null, range: chipValue('sgRange'),
       from: $('sgFrom').value, notes: $('sgNotes').value.trim().slice(0, 300),
     };
     // Keep the old weather if the time didn't change and it's no longer in the forecast window.
@@ -1555,6 +1722,7 @@
     store.sightings.sort((a, b) => new Date(b.time) - new Date(a.time));
     pendingSighting = null;
     save(); render();
+    if (!data.snap) backfillSnaps();
     showToast(old ? 'Sighting updated' : 'Sighting saved');
     return true;
   }
@@ -1563,6 +1731,7 @@
     const many = { doe: 'does', fawn: 'fawns', buck: 'bucks' };
     let who;
     if (sg.kind === 'buck' && sg.deerId) who = deerName(sg.deerId) || 'Buck';
+    else if (sg.kind === 'buck' && sg.size === 'shooter') who = sg.count > 1 ? `${sg.count} shooter bucks` : 'Shooter buck';
     else if (sg.kind === 'group') who = `Group of ${sg.count}`;
     else who = sg.count > 1 ? `${sg.count} ${many[sg.kind]}` : KINDS[sg.kind];
     return `${who}${sg.activity ? ` · ${ACTIVITIES[sg.activity]}` : ''}${sg.heading != null ? ` · heading ${DIRS8[Math.round(sg.heading / 45) % 8]}` : ''}`;
@@ -1643,11 +1812,12 @@
   // checked against what actually happened on this property.
   const BUSTED = { no: 'No', winded: 'Winded me', saw: 'Saw / heard me' };
   // Structured "what happened" tags: unlike free-text notes, the app can count these.
-  const SIT_TAGS = {
-    'bumped-in': 'Bumped deer walking in', winded: 'Winded me in the stand', seen: 'Saw / heard me',
-    'bumped-out': 'Bumped deer walking out', swirl: 'Wind swirled', disturbance: 'People / vehicles / dogs',
-    'out-of-range': 'Deer out of range', shot: 'Had a shot',
-  };
+  const SIT_TAG_GROUPS = [
+    { label: 'Deer activity', tone: 'good', tags: { 'saw-target': 'Saw a target buck', shooter: 'Saw a shooter buck', chasing: 'Chasing / rut activity', cruising: 'Buck cruising', 'feeding-range': 'Deer feeding in range', expected: 'Came the way I expected', unexpected: 'Came from somewhere unexpected' } },
+    { label: 'Hunt', tone: 'good', tags: { shot: 'Had a shot opportunity', 'took-shot': 'Took a shot', harvest: 'Harvested a deer', missed: 'Missed', called: 'Called / rattled one in', sign: 'Fresh rubs or scrapes' } },
+    { label: 'Problems', tone: 'bad', tags: { 'bumped-in': 'Bumped deer walking in', winded: 'Winded me in the stand', seen: 'Saw / heard me', 'bumped-out': 'Bumped deer walking out', swirl: 'Wind swirled', disturbance: 'People / vehicles / dogs', 'out-of-range': 'Deer out of range', 'left-early': 'Left early' } },
+  ];
+  const SIT_TAGS = Object.assign({}, ...SIT_TAG_GROUPS.map((g) => g.tags));
   const sitTags = (sit) => sit.tags || (sit.busted === 'winded' ? ['winded'] : sit.busted === 'saw' ? ['seen'] : []);
   let sitMode = 'start', sitEditId = null, sitStandId = null, sightingContext = null, sitTimer = null;
 
@@ -1656,14 +1826,15 @@
   const sitHours = (st) => Math.max(0, (new Date(st.end) - new Date(st.start)) / HOUR);
 
   // What the app predicted for a window: average and best hourly movement score.
-  function predictionFor(start, end) {
-    if (!model || !model.hours.length) return null;
-    const idx = model.hours.map((h, i) => i).filter((i) => {
-      const t = model.hours[i].time.getTime();
+  function predictionFor(start, end, src) {
+    src = src || model;
+    if (!src || !src.hours.length) return null;
+    const idx = src.hours.map((h, i) => i).filter((i) => {
+      const t = src.hours[i].time.getTime();
       return t + HOUR > start.getTime() && t < end.getTime();
-    }).filter((i) => model.scores[i] != null);
+    }).filter((i) => src.scores[i] != null);
     if (!idx.length) return null;
-    const sc = idx.map((i) => model.scores[i]);
+    const sc = idx.map((i) => src.scores[i]);
     return { avg: Math.round(sc.reduce((a, b) => a + b, 0) / sc.length), max: Math.max(...sc) };
   }
 
@@ -1701,7 +1872,10 @@
       $('sitBucks').value = sit.end ? sit.bucks : bucks;
       $('sitDoes').value = sit.end ? sit.does : others;
       $('sitFromSightings').textContent = sg.length ? `${sg.length} sighting${sg.length > 1 ? 's' : ''} logged during this sit` : '';
-      $('sitTags').innerHTML = Object.entries(SIT_TAGS).map(([k, v]) => `<button type="button" data-v="${k}" class="${sitTags(sit).includes(k) ? 'on' : ''}">${v}</button>`).join('');
+      $('sitTags').innerHTML = SIT_TAG_GROUPS.map((g) => `<div class="tag-group"><div class="tag-group-label">${g.label}</div><div class="chips">${Object.entries(g.tags).map(([k, v]) => `<button type="button" data-v="${k}" class="${g.tone} ${sitTags(sit).includes(k) ? 'on' : ''}">${v}</button>`).join('')}</div></div>`).join('');
+      const layout = ['NW', 'N', 'NE', 'W', '', 'E', 'SW', 'S', 'SE'];
+      const came = (sit.approach || []).map((d) => DIRS8[Math.round(d / 45) % 8]);
+      $('sitApproach').innerHTML = layout.map((d) => (d ? `<button type="button" data-dir="${d}" class="${came.includes(d) ? 'on' : ''}">${d}</button>` : `<span class="cp-center">${icon('ladder')}</span>`)).join('');
       $('sitNotes').value = sit.notes || '';
     }
     updateSitSnap();
@@ -1744,12 +1918,18 @@
     sit.bucks = Math.max(0, Number($('sitBucks').value) || 0);
     sit.does = Math.max(0, Number($('sitDoes').value) || 0);
     sit.tags = [...$('sitTags').querySelectorAll('button.on')].map((b) => b.dataset.v);
+    sit.approach = [...$('sitApproach').querySelectorAll('button.on')].map((b) => DIRS8.indexOf(b.dataset.dir) * 45);
     sit.busted = sit.tags.includes('winded') ? 'winded' : sit.tags.includes('seen') ? 'saw' : 'no';
     sit.notes = $('sitNotes').value.trim().slice(0, 300);
     sit.endSnap = snapshotAt(t) || sit.endSnap || null;
     sit.pred = predictionFor(new Date(sit.start), t) || sit.pred || null;
+    // What the wind actually did on stand, from wind checks made during the sit.
+    sit.observedWinds = store.windChecks.filter((c) => new Date(c.time) >= new Date(sit.start) && new Date(c.time) <= t)
+      .map((c) => ({ time: c.time, dir: c.dir, speed: c.speed }));
     if (store.activeSitId === sit.id) store.activeSitId = null;
     save(); render();
+    if (!sit.startSnap || !sit.pred) backfillSnaps();
+    if (sit.tags.includes('harvest') && sitMode === 'end') { showToast('Congratulations! 🦌 Logged as a harvest.'); return true; }
     if (sitMode === 'end') showToast(`Sit logged: ${sitHours(sit).toFixed(1)} hrs, ${sit.bucks + sit.does} deer`);
     return true;
   }
@@ -1814,6 +1994,8 @@
     const maxRate = Math.max(0.5, ...rows.map((r) => r.rate || 0));
     const totalHrs = done.reduce((a, x) => a + sitHours(x), 0);
     const totalDeer = done.reduce((a, x) => a + x.bucks + x.does, 0);
+    const shotsAll = ended.filter((x) => (x.tags || []).some((k) => k === 'shot' || k === 'took-shot')).length;
+    const harvests = ended.filter((x) => (x.tags || []).includes('harvest')).length;
     const stands = store.stands.map((st) => {
       const all = ended.filter((x) => x.standId === st.id);
       if (!all.length) return null;
@@ -1821,15 +2003,31 @@
       const bumps = all.length - g.length;
       const hrs = g.reduce((a, x) => a + sitHours(x), 0);
       const deer = g.reduce((a, x) => a + x.bucks + x.does, 0);
-      const winds = g.filter((x) => x.startSnap && x.bucks + x.does > 0).map((x) => DIRS8[Math.round(x.startSnap.dir / 45) % 8]);
+      // Prefer the wind you actually observed on stand over the forecast.
+      const sitWind = (x) => (x.observedWinds && x.observedWinds.length ? x.observedWinds[0].dir : x.startSnap ? x.startSnap.dir : null);
+      const winds = g.filter((x) => sitWind(x) != null && x.bucks + x.does > 0).map((x) => DIRS8[Math.round(sitWind(x) / 45) % 8]);
+      // Where deer actually came from, and whether the stand's facing and good winds fit that.
+      const came = {};
+      all.forEach((x) => (x.approach || []).forEach((d) => { const k = DIRS8[Math.round(d / 45) % 8]; came[k] = (came[k] || 0) + 1; }));
+      const topCame = Object.entries(came).sort((a, b) => b[1] - a[1])[0];
+      const tips = [];
+      if (topCame && topCame[1] >= 2) {
+        const dc = DIRS8.indexOf(topCame[0]) * 45;
+        if (st.facing != null && angDiff(st.facing, dc) >= 90) tips.push(`deer mostly come from the ${topCame[0]} but the stand faces ${DIRS8[Math.round(st.facing / 45) % 8]}`);
+        const fits = st.goodWinds.some((w) => angDiff(DIRS8.indexOf(w) * 45, dc) <= 45);
+        if (!fits) { const i = DIRS8.indexOf(topCame[0]); tips.push(`${DIRS8[(i + 7) % 8]}, ${topCame[0]} or ${DIRS8[(i + 1) % 8]} winds would keep your scent off them`); }
+      }
+      const shots = all.filter((x) => (x.tags || []).some((k) => k === 'shot' || k === 'took-shot')).length;
+      const targets = all.filter((x) => (x.tags || []).includes('saw-target') || (x.tags || []).includes('shooter')).length;
       const c = {}; winds.forEach((w) => { c[w] = (c[w] || 0) + 1; });
       const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
       return `<div class="list-row static"><span class="tile">${icon('ladder')}</span><span class="row-text"><strong>${esc(st.name)}</strong>
-        <span>${all.length} sit${all.length > 1 ? 's' : ''}${g.length ? ` · ${hrs.toFixed(1)} h · ${(deer / hrs).toFixed(1)} deer/hr · ${g.reduce((a, x) => a + x.bucks, 0)} bucks` : ''}${best ? ` · deer most often on ${best[0]} wind` : ''}${bumps ? ` · <b class="hot">bumped deer walking in ${bumps}×</b>` : ''}</span></span></div>`;
+        <span>${all.length} sit${all.length > 1 ? 's' : ''}${g.length ? ` · ${hrs.toFixed(1)} h · ${(deer / hrs).toFixed(1)} deer/hr · ${g.reduce((a, x) => a + x.bucks, 0)} bucks` : ''}${best ? ` · deer most often on ${best[0]} wind` : ''}${bumps ? ` · <b class="hot">bumped deer walking in ${bumps}×</b>` : ''}${targets ? ` · shooter/target seen ${targets}×` : ''}${shots ? ` · ${shots} shot opportunit${shots > 1 ? 'ies' : 'y'}` : ''}${topCame ? ` · deer came from ${topCame[0]} most` : ''}</span>${tips.map((t) => `<span class="hot">Tip: ${t.charAt(0).toUpperCase() + t.slice(1)}.</span>`).join('')}</span></div>`;
     }).filter(Boolean).join('');
     el.innerHTML = `<h3 class="section">How's the score doing?</h3>
       <div class="card">
         <p class="muted small" style="margin-top:0">${blown.length ? `${blown.length} sit${blown.length > 1 ? 's' : ''} where deer were bumped walking in ${blown.length > 1 ? 'are' : 'is'} left out. ` : ''}${done.length} sit${done.length === 1 ? '' : 's'}, ${totalHrs.toFixed(1)} hours, ${totalDeer} deer. ${done.length < 15 ? 'Fewer than 15 sits is mostly noise. Keep logging every sit, including the empty ones.' : 'If high-score sits produce more deer per hour, the score is working on your property.'}</p>
+        ${shotsAll || harvests ? `<p class="small" style="margin-top:0"><b>${shotsAll}</b> shot opportunit${shotsAll === 1 ? 'y' : 'ies'}${harvests ? ` · <b>${harvests}</b> harvest${harvests > 1 ? 's' : ''}` : ''} this season.</p>` : ''}
         <div class="score-bars">${rows.map((r) => `<div class="score-bar"><span>${r.label}<br><span class="muted small">${r.n} sit${r.n === 1 ? '' : 's'}</span></span>
           <span class="track"><span style="width:${r.rate != null ? Math.max(3, (r.rate / maxRate) * 100) : 0}%;background:var(--orange)"></span></span>
           <b>${r.rate != null ? `${r.rate.toFixed(1)}/hr` : '—'}</b></div>`).join('')}</div>
@@ -1909,6 +2107,50 @@
     save(); render();
     showToast(`Using a ${dirName(dir)} wind for the next 90 minutes`);
     return true;
+  }
+
+  // ---------- Backup ----------
+  function exportData() {
+    const blob = new Blob([JSON.stringify({ app: 'hunt-smart', version: 1, ...store }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `hunt-smart-backup-${isoDate(new Date())}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    store.lastBackupAt = Date.now();
+    save(); renderBackupNudge();
+  }
+
+  // Everything lives only on this phone, so nudge for a backup once enough has been logged.
+  function renderBackupNudge() {
+    const last = store.lastBackupAt || 0;
+    const created = (id) => parseInt(id, 36) || 0; // ids are creation timestamps
+    const fresh = [...store.sits, ...store.sightings].filter((x) => created(x.id) > last).length;
+    $('backupSub').textContent = last ? `Last backup ${new Date(last).toLocaleDateString([], { month: 'short', day: 'numeric' })}${fresh ? ` · ${fresh} new entr${fresh > 1 ? 'ies' : 'y'} since` : ''}` : 'Never backed up. Export a copy so a lost phone doesn\'t lose your log';
+    const show = fresh >= 3 && Date.now() - last > 7 * 24 * HOUR;
+    $('backupNudge').innerHTML = show ? `<div class="nudge">${icon('download')}<span><b>${fresh} entries</b> since your last backup. Your log only lives on this phone.</span><button class="btn" data-backup-now>Back up</button></div>` : '';
+  }
+
+  // ---------- Setup guide ----------
+  function renderSetup() {
+    const el = $('setupCard');
+    const near = nearbyStands();
+    const needWinds = near.find((x) => !x.goodWinds.length || x.facing == null);
+    const needRoute = near.find((x) => !(x.routes || []).length);
+    const steps = [
+      { done: hasLoc(), title: 'Set your property location', sub: 'Weather, sun and moon for your land', attr: 'data-locopen', ic: 'pin' },
+      { done: near.length > 0, title: 'Add your stands', sub: 'Drop each stand on the map', attr: 'data-setup="stand"', ic: 'ladder' },
+      { done: near.length > 0 && !needWinds, title: 'Set good winds and facing', sub: needWinds ? `${esc(needWinds.name)} needs them` : 'Each stand needs both', attr: needWinds ? `data-edit="${needWinds.id}"` : '', ic: 'wind' },
+      { done: near.length > 0 && !needRoute, title: 'Draw your routes in', sub: needRoute ? `None yet for ${esc(needRoute.name)}` : 'Lets the app pick the cleanest walk in', attr: needRoute ? `data-route-for="${needRoute.id}"` : '', ic: 'route' },
+      { done: store.spots.length > 0, title: 'Mark bedding and food', sub: 'Route ratings keep your scent off them', attr: 'data-setup="spots"', ic: 'bed' },
+      { done: store.sits.length > 0, title: 'Log your first sit', sub: 'Every sit teaches the app your property', attr: 'data-goview="log"', ic: 'play' },
+    ];
+    const n = steps.filter((x) => x.done).length;
+    if (n === steps.length || store.settings.hideSetup) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="setup-card"><div class="reco-head"><span>${icon('star')} Get set up · ${n} of ${steps.length} done</span><button type="button" data-hide-setup>Hide</button></div>
+      ${steps.filter((x) => !x.done).map((x) => `<button type="button" class="list-row setup-step ${x.done ? 'done' : ''}" ${x.done ? '' : x.attr}>
+        <span class="tile">${icon(x.done ? 'star' : x.ic)}</span><span class="row-text"><strong>${x.title}</strong><span>${x.sub}</span></span>
+        ${x.done ? '' : '<svg class="ic chev"><use href="#i-chev-r"/></svg>'}</button>`).join('')}</div>`;
   }
 
   // ---------- Events ----------
@@ -2007,7 +2249,7 @@
       const b = e.target.closest('[data-filter]');
       if (b) { logFilter = b.dataset.filter; renderLog(); }
     });
-    ['sgKind', 'sgActivity'].forEach((id) => $(id).addEventListener('click', (e) => {
+    ['sgKind', 'sgActivity', 'sgSize', 'sgRange'].forEach((id) => $(id).addEventListener('click', (e) => {
       const b = e.target.closest('button[data-v]');
       if (!b) return;
       const was = b.classList.contains('on');
@@ -2062,6 +2304,7 @@
     $('sitSawDeer').addEventListener('click', sawDeerDuringSit);
     $('sitStandList').addEventListener('click', (e) => { const b = e.target.closest('[data-sit-stand]'); if (b) selectSitStand(b.dataset.sitStand); });
     $('sitTime').addEventListener('change', updateSitSnap);
+    $('sitApproach').addEventListener('click', (e) => { const b = e.target.closest('button[data-dir]'); if (b) b.classList.toggle('on'); });
     $('sitTags').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-v]');
       if (b) b.classList.toggle('on');
@@ -2147,6 +2390,16 @@
         return;
       }
       if (e.target.closest('[data-windcheck]')) { openWindCheck(); return; }
+      const ss = e.target.closest('[data-start-sit]');
+      if (ss) { openSitSheet('start'); selectSitStand(ss.dataset.startSit); return; }
+      if (e.target.closest('[data-backup-now]')) { exportData(); return; }
+      if (e.target.closest('[data-hide-setup]')) { store.settings.hideSetup = true; save(); renderSetup(); return; }
+      const su = e.target.closest('[data-setup]');
+      if (su) {
+        showView('map');
+        setTimeout(() => (su.dataset.setup === 'stand' ? setPlacing('stand') : openAddSheet()), 80);
+        return;
+      }
       const cl = e.target.closest('[data-close]');
       if (cl) { $(cl.dataset.close).close(); return; }
       const spm = e.target.closest('[data-spot-map]');
@@ -2169,7 +2422,7 @@
       if (sgEl) { if (map) map.closePopup(); openSightingSheet(sgEl.dataset.sighting); return; }
       const ed = e.target.closest('[data-edit]');
       if (ed) { if (map) map.closePopup(); openStandDialog(ed.dataset.edit); return; }
-      if (e.target.closest('.loc-open')) { openLocationDialog(); return; }
+      if (e.target.closest('.loc-open, [data-locopen]')) { openLocationDialog(); return; }
       const gv = e.target.closest('[data-goview]');
       if (gv) showView(gv.dataset.goview);
     });
@@ -2217,14 +2470,7 @@
     $('locGps').addEventListener('click', () => { $('locDialog').close(); useGps(); });
     $('locCancel').addEventListener('click', () => $('locDialog').close());
 
-    $('exportBtn').addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify({ app: 'hunt-smart', version: 1, ...store }, null, 2)], { type: 'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'hunt-smart-stands.json';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    });
+    $('exportBtn').addEventListener('click', exportData);
     $('importFile').addEventListener('change', async (e) => {
       const f = e.target.files[0];
       if (!f) return;
@@ -2257,6 +2503,7 @@
             count: Math.max(1, Math.min(50, Number(x.count) || 1)), deerId: x.deerId ? String(x.deerId) : null,
             activity: ACTIVITIES[x.activity] ? x.activity : null, heading: typeof x.heading === 'number' ? x.heading : null,
             from: String(x.from || 'house'), notes: String(x.notes || '').slice(0, 300), sitId: x.sitId ? String(x.sitId) : null,
+            size: SIZES[x.size] ? x.size : null, range: RANGES[x.range] ? x.range : null,
             snap: x.snap && typeof x.snap === 'object' ? {
               temp: +x.snap.temp, wind: +x.snap.wind, dir: +x.snap.dir, gust: +x.snap.gust, pressure: +x.snap.pressure,
               trend: x.snap.trend == null ? null : +x.snap.trend, code: +x.snap.code, score: x.snap.score == null ? null : +x.snap.score,
@@ -2274,6 +2521,8 @@
             bucks: Math.max(0, Math.min(99, Number(x.bucks) || 0)), does: Math.max(0, Math.min(99, Number(x.does) || 0)),
             busted: BUSTED[x.busted] ? x.busted : 'no', notes: String(x.notes || '').slice(0, 300),
             tags: Array.isArray(x.tags) ? x.tags.filter((k) => SIT_TAGS[k]) : undefined,
+            approach: Array.isArray(x.approach) ? x.approach.filter((d) => typeof d === 'number').map((d) => ((Math.round(d / 45) % 8) + 8) % 8 * 45) : [],
+            observedWinds: Array.isArray(x.observedWinds) ? x.observedWinds.filter((c) => c && typeof c.dir === 'number').map((c) => ({ time: String(c.time || ''), dir: c.dir, speed: num(c.speed) })) : [],
             startSnap: snapIn(x.startSnap), endSnap: snapIn(x.endSnap),
             pred: x.pred && typeof x.pred === 'object' ? { avg: num(x.pred.avg), max: num(x.pred.max) } : null,
           }));
@@ -2318,8 +2567,9 @@
     renderLocation();
     if (hasLoc() && !store.settings.placeName) lookupPlaceName(store.settings.lat, store.settings.lon);
     buildModel(); render();
-    if (hasLoc()) fetchForecast();
+    if (hasLoc()) { fetchForecast(); setTimeout(backfillSnaps, 4000); }
     else {
+      renderSetup();
       $('scoreLabel').textContent = 'Set your property location';
       $('scoreReasons').innerHTML = '<li class="muted">Allow location access, or tap the location name above to search.</li>';
       useGps();

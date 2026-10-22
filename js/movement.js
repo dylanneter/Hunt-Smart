@@ -48,6 +48,11 @@
    */
   function scoreHours(hours, getDay, opts) {
     const out = [];
+    // "Normal" temperature for each hour of the day across the whole window (~10 days),
+    // so heat is judged against the season, not a fixed number.
+    const sums = new Array(24).fill(0), counts = new Array(24).fill(0);
+    for (const h of hours) if (h.temp != null) { const k = h.time.getHours(); sums[k] += h.temp; counts[k]++; }
+    const normal = sums.map((v, k) => (counts[k] >= 3 ? v / counts[k] : null));
     for (let i = 0; i < hours.length; i++) {
       const h = hours[i];
       const day = getDay(h.time);
@@ -75,8 +80,13 @@
         else if (dt >= 5) score -= 2;
       }
       if (h.temp != null) {
-        if (h.temp > 75) score -= 8;
-        else if (h.temp > 65) score -= 4;
+        const n = normal[h.time.getHours()];
+        const anomaly = n != null ? h.temp - n : 0;
+        if (anomaly > 10) score -= 6; // unseasonably warm
+        else if (anomaly > 5) score -= 3;
+        else if (anomaly < -8) score += 3; // unseasonably cold
+        if (h.temp > 75) score -= 4; // hot is hot, whatever the season
+        h.tempAnomaly = anomaly;
       }
 
       // 4. Pressure trend over 6 hours (mixed evidence, small weight).
@@ -139,7 +149,10 @@
       if (dt <= -5) reasons.push({ good: true, text: `Morning ${Math.round(-dt)}° cooler than yesterday` });
       else if (dt >= 5) reasons.push({ good: false, text: `Morning ${Math.round(dt)}° warmer than yesterday` });
     }
-    if (temps.length && Math.max(...temps) > 68) reasons.push({ good: false, text: 'Warm afternoon: deer will move late' });
+    const anoms = dayHours.map((h) => h.tempAnomaly).filter((v) => v != null);
+    const maxAnom = anoms.length ? Math.max(...anoms) : 0, minAnom = anoms.length ? Math.min(...anoms) : 0;
+    if (maxAnom > 8 || (temps.length && Math.max(...temps) > 75)) reasons.push({ good: false, text: 'Warmer than it has been: deer will move late' });
+    else if (minAnom < -8) reasons.push({ good: true, text: 'Colder than it has been' });
     if (precip > 0.3) reasons.push({ good: false, text: 'Steady rain expected' });
     if (winds.length) {
       const mw = Math.max(...winds);
@@ -197,7 +210,7 @@
   const EVIDENCE = [
     { factor: 'Time of day (dawn & dusk)', weight: 'Up to +55', strength: 'strong', note: 'The dominant pattern in every GPS-collar study.' },
     { factor: 'Rut timing', weight: '+4 to +12, plus midday movement at peak', strength: 'strong', note: 'Adult bucks increase movement into the breeding season, then drop off after.' },
-    { factor: 'Temperature change', weight: '+5 to +9 for a cold snap, −2 to −8 for warm/hot', strength: 'moderate', note: 'The most consistent weather effect, but smaller than time of day.' },
+    { factor: 'Temperature', weight: '+5 to +9 colder than yesterday, +3 colder than the week; −2 to −6 warmer, −4 above 75°F', strength: 'moderate', note: 'The most consistent weather effect, but smaller than time of day. Warmth is judged against the past and coming week, not a fixed number.' },
     { factor: 'Barometric pressure', weight: '+2 to +3', strength: 'mixed', note: 'Some studies show more movement on rising or very high pressure; others show little.' },
     { factor: 'Rain', weight: '−6 heavy, +4 after it clears', strength: 'limited', note: 'Little hard data; kept small.' },
     { factor: 'Solunar (moon overhead/underfoot)', weight: '+2 to +4', strength: 'weak', note: 'One GPS study found a link only for overhead/underfoot, mostly away from new/full moon. Moonrise/moonset not scored.' },

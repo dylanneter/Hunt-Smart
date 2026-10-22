@@ -303,7 +303,7 @@
         </button>
       </div>
 
-      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 15 (Map hour steps)</p>
+      <p class="footnote center">Everything is stored on this phone only. Add to home screen: Share → Add to Home Screen (iPhone) or ⋮ → Install app (Android).<br>Weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> &amp; NWS · Imagery: Esri · Elevation: USGS 3DEP · Places &amp; maps: © OpenStreetMap contributors.<br>Movement scores are estimates, not guarantees.<br>Version 16 (Thermal fix)</p>
     </section>
   </main>
 
@@ -345,6 +345,7 @@
           <div class="list route-list" id="routeList"></div>
           <button type="button" class="btn ghost" id="drawRouteBtn"><svg class="ic sm"><use href="#i-route"/></svg> Draw a route in</button>
         </div>
+        <label class="toggle-row"><span>Wind always wins here<br><small class="muted">Exposed stand (cliff, ridge top, open field): ignore thermals</small></span><input type="checkbox" id="standNoThermals"></label>
         <label class="field-block"><span>Type</span>
           <select id="standType">
             <option>Ladder</option><option>Hang-on</option><option>Climber</option>

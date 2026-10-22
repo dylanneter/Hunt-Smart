@@ -132,7 +132,10 @@
     else phase = 'switching';
     if (phase === 'switching') return { phase, toward: null, speed: 0 };
     // Slope flows are typically 1-2 mph; they steer scent mainly when the wind is light.
-    const speed = 2 * Math.min(1, ground.slope / 10);
+    let speed = 2 * Math.min(1, ground.slope / 10);
+    // On a ridge or cliff top the drainage flow runs off below you; at stand height the
+    // air mostly moves with the wind.
+    if (ground.position === 'ridge') speed *= 0.35;
     return { phase, toward: phase === 'down' ? ground.aspect : (ground.aspect + 180) % 360, speed };
   }
 
@@ -146,9 +149,13 @@
     let x = Math.sin(toward * RAD) * (wind.speed || 0), y = Math.cos(toward * RAD) * (wind.speed || 0);
     let share = 0;
     if (th && th.toward != null && th.speed > 0) {
-      x += Math.sin(th.toward * RAD) * th.speed;
-      y += Math.cos(th.toward * RAD) * th.speed;
-      share = th.speed / ((wind.speed || 0) + th.speed);
+      // Thermals steer scent in light air; once the wind is moving they fade out fast.
+      const ws = wind.speed || 0;
+      const k = ws <= 3 ? 1 : Math.max(0, 1 - (ws - 3) / 5); // gone by ~8 mph
+      const tsp = th.speed * k;
+      x += Math.sin(th.toward * RAD) * tsp;
+      y += Math.cos(th.toward * RAD) * tsp;
+      share = tsp / (ws + tsp || 1);
     }
     const sp = Math.hypot(x, y);
     const tw = sp > 0 ? ((Math.atan2(x, y) / RAD) + 360) % 360 : toward;

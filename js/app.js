@@ -114,7 +114,11 @@
   function driftAt(st, wind, t) {
     if (!wind || wind.dir == null) return null;
     const g = groundAt(st.lat, st.lon);
-    const th = g && model && store.settings.thermals !== false ? Terrain.thermal(g, t, model.getDay(t)) : null;
+    // A wind check is what the air is actually doing (thermals included), so don't add
+    // a modeled thermal on top of it. Same for stands marked "wind always wins".
+    const observed = activeWindCheck() && Math.abs(t - Date.now()) < 45 * 60 * 1000;
+    const useThermals = g && model && store.settings.thermals !== false && !st.noThermals && !observed;
+    const th = useThermals ? Terrain.thermal(g, t, model.getDay(t)) : null;
     return Terrain.scentDrift(wind, th) || { dir: wind.dir, speed: wind.speed, thermalShare: 0 };
   }
 
@@ -1311,6 +1315,7 @@
     $('standNotes').value = s ? s.notes || '' : '';
     const good = s ? s.goodWinds : [];
     $('windPick').querySelectorAll('button[data-dir]').forEach((b) => b.classList.toggle('on', good.includes(b.dataset.dir)));
+    $('standNoThermals').checked = !!(s && s.noThermals);
     const facing = s && s.facing != null ? DIRS8[Math.round(s.facing / 45) % 8] : null;
     $('facingPick').querySelectorAll('button[data-dir]').forEach((b) => b.classList.toggle('on', b.dataset.dir === facing));
     $('routeBlock').classList.toggle('hidden', !s);
@@ -1324,7 +1329,7 @@
     goodWinds.sort((a, b) => DIRS8.indexOf(a) - DIRS8.indexOf(b));
     const f = $('facingPick').querySelector('button.on');
     const facing = f ? DIRS8.indexOf(f.dataset.dir) * 45 : null;
-    const data = { name: $('standName').value.trim() || 'Stand', type: $('standType').value, notes: $('standNotes').value.trim(), goodWinds, facing };
+    const data = { name: $('standName').value.trim() || 'Stand', type: $('standType').value, notes: $('standNotes').value.trim(), goodWinds, facing, noThermals: $('standNoThermals').checked };
     if (editingId) {
       Object.assign(store.stands.find((x) => x.id === editingId), data);
     } else if (pendingLatLng) {
@@ -2232,6 +2237,7 @@
           goodWinds: Array.isArray(s.goodWinds) ? s.goodWinds.filter((d) => DIRS8.includes(d)) : [],
           type: String(s.type || ''), notes: String(s.notes || '').slice(0, 300),
           facing: typeof s.facing === 'number' ? ((Math.round(s.facing / 45) % 8) + 8) % 8 * 45 : null,
+          noThermals: s.noThermals === true,
           routes: Array.isArray(s.routes) ? s.routes.filter((r) => Array.isArray(r.points) && r.points.length > 1 && r.points.every((p) => Array.isArray(p) && typeof p[0] === 'number' && typeof p[1] === 'number'))
             .map((r) => ({ id: String(r.id || Math.random().toString(36).slice(2)), name: String(r.name || 'Route').slice(0, 30), points: r.points.map((p) => [p[0], p[1]]) })) : [],
         }));

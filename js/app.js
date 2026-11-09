@@ -2235,6 +2235,15 @@
     renderToday();
   }
 
+  // The ‹ › arrows roll over midnight into the next or previous day so you can keep stepping.
+  function stepHour(delta) {
+    let h = selectedHour + delta, d = selectedDay;
+    if (h > 23 && d < model.days.length - 1) { h = 0; d++; }
+    else if (h < 0 && d > 0) { h = 23; d--; }
+    if (d !== selectedDay) { selectedDay = d; renderDayPicker(); }
+    selectHour(h);
+  }
+
   function bind() {
     document.querySelector('.tabbar').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-view]');
@@ -2251,7 +2260,7 @@
     $('todayHour').addEventListener('input', (e) => selectHour(Number(e.target.value)));
     $('hourPill').addEventListener('click', (e) => {
       const st = e.target.closest('[data-step]');
-      if (st) selectHour(selectedHour + Number(st.dataset.step));
+      if (st) stepHour(Number(st.dataset.step));
     });
     $('hourly').addEventListener('click', (e) => {
       const h = e.target.closest('[data-hour]');
